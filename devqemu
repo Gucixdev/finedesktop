@@ -78,7 +78,7 @@ export RUST_LOG=${RUST_LOG:-info,smithay=warn}
 [ -f "$repo/.devqemu/guest.conf" ] && export FD_CONFIG=$repo/.devqemu/guest.conf
 case $mode in
   shell) exec setsid -c bash -i ;;
-  *) "$repo/target/debug/finedesktop"; echo "[guest] finedesktop exited with $?"; sleep 1; poweroff -f ;;
+  *) "$repo/target/debug/finedesktop" -c foot; echo "[guest] finedesktop exited with $?"; sleep 1; poweroff -f ;;
 esac
 GUEST
   chmod +x "$work/guest-init"

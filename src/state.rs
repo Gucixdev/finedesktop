@@ -48,6 +48,8 @@ pub struct Desktop {
 
     pub space: Space<Window>,
     pub loop_signal: LoopSignal,
+    pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Desktop>,
+    pub drm: Option<crate::components::compositor_drm::Drm>,
 
     // Smithay State
     pub compositor_state: CompositorState,
@@ -68,7 +70,7 @@ pub struct Desktop {
 }
 
 impl Desktop {
-    pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
+    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
         let start_time = std::time::Instant::now();
 
         let dh = display.handle();
@@ -120,6 +122,8 @@ impl Desktop {
 
             space,
             loop_signal,
+            loop_handle: event_loop.handle(),
+            drm: None,
             socket_name,
 
             compositor_state,
@@ -252,7 +256,11 @@ impl Desktop {
     pub fn usable_area(&self, mi: usize) -> Option<Rect> {
         let output = &self.mons.get(mi)?.output;
         let geo = self.space.output_geometry(output)?;
-        let zone = smithay::desktop::layer_map_for_output(output).non_exclusive_zone();
+        // the zone is cached from the last arrange(): redo it so a resized output is not tiled at its old size
+        let mut map = smithay::desktop::layer_map_for_output(output);
+        map.arrange();
+        let zone = map.non_exclusive_zone();
+        drop(map);
         Some(Rect { x: geo.loc.x + zone.loc.x, y: geo.loc.y + zone.loc.y, w: zone.size.w, h: zone.size.h })
     }
 
@@ -409,6 +417,11 @@ impl Desktop {
                 }
             }
             Action::Quit => self.loop_signal.stop(),
+            Action::Vt(n) => {
+                if let Some(d) = self.drm.as_mut() {
+                    d.change_vt(n as i32);
+                }
+            }
             Action::Reload => {
                 self.load_config();
             }

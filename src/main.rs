@@ -9,7 +9,6 @@ mod ipc;
 mod keys;
 mod components;
 mod state;
-mod winit;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 pub use state::Desktop;
@@ -21,12 +20,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     init_logging();
 
-    let mut event_loop: EventLoop<Desktop> = EventLoop::try_new()?;
+    let mut event_loop: EventLoop<'static, Desktop> = EventLoop::try_new()?;
     let display: Display<Desktop> = Display::new()?;
     let mut state = Desktop::new(&mut event_loop, display);
 
-    // Open a Wayland/X11 window for our nested compositor
-    crate::winit::init_winit(&mut event_loop, &mut state)?;
+    components::compositor::init(&mut event_loop, &mut state)?;
 
     // Children (autostart, spawned apps) must talk to us, not to the host compositor
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &state.socket_name) };

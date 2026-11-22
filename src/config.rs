@@ -49,6 +49,7 @@ pub enum Action {
     FocusMon(Dir),
     SendMon(Dir),
     State,
+    Vt(u8),
 }
 
 #[derive(Clone, Debug)]

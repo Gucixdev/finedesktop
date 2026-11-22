@@ -31,6 +31,10 @@ impl Desktop {
                             return FilterResult::Forward;
                         }
                         let sym = handle.raw_latin_sym_or_raw_current_sym().map_or(0, |s| s.raw());
+                        // XF86Switch_VT_1..12 (ctrl+alt+Fn)
+                        if (0x1008FE01..=0x1008FE0C).contains(&sym) {
+                            return FilterResult::Intercept(crate::config::Action::Vt((sym - 0x1008FE00) as u8));
+                        }
                         match state.config.find(crate::keys::mods_of(mods), sym) {
                             Some(a) => FilterResult::Intercept(a.clone()),
                             None => FilterResult::Forward,
