@@ -40,6 +40,15 @@ impl XdgShellHandler for Desktop {
         self.remove_dead();
     }
 
+    // the app id arrives after the first commit: rules and hooks need it
+    fn app_id_changed(&mut self, _surface: ToplevelSurface) {
+        self.refocus();
+    }
+
+    fn title_changed(&mut self, _surface: ToplevelSurface) {
+        self.refocus();
+    }
+
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
         self.unconstrain_popup(&surface);
         let _ = self.popups.track_popup(PopupKind::Xdg(surface));

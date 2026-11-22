@@ -90,6 +90,9 @@ pub struct Desktop {
     pub capture: crate::components::capture::Capture,
     pub notes: crate::components::notification::notts::Notes,
     pub fx: crate::components::fx::Fx,
+    /// windows the rules have been applied to
+    pub ruled: std::collections::HashSet<u32>,
+    pub low_warned: bool,
     /// custom tab labels by window id (`ctl name`)
     pub names: std::collections::HashMap<u32, String>,
     /// None: the panels show on empty workspaces; Some: forced on or off with `welcome`
@@ -186,6 +189,8 @@ impl Desktop {
             capture: Default::default(),
             notes: Default::default(),
             fx: Default::default(),
+            ruled: Default::default(),
+            low_warned: false,
             names: Default::default(),
             panel_show: None,
             bar_cache: Default::default(),
@@ -419,6 +424,7 @@ impl Desktop {
         for id in gone {
             let (app, title) = self.known.remove(&id).unwrap_or_default();
             self.names.remove(&id);
+            self.ruled.remove(&id);
             self.emit(Event::close(id, &app, &title));
         }
         for (id, (app, title)) in alive {
@@ -427,6 +433,7 @@ impl Desktop {
             }
             self.known.insert(id, (app, title));
         }
+        self.apply_rules();
         let now = self.focused().map(|(_, w)| Desktop::win_info(w));
         let id = now.as_ref().map(|n| n.0);
         if id != self.last_focus {
@@ -780,6 +787,9 @@ impl Desktop {
             Action::State(false) => return self.report(),
             Action::Name(text) => return self.name_cmd(&text),
             Action::Session(what) => return self.session_cmd(&what),
+            Action::Autostart(arg) => return self.autostart_cmd(&arg),
+            Action::Power(arg) => return self.power_cmd(&arg),
+            Action::Crash(arg) => return self.crash_cmd(&arg),
             Action::Trash(arg) => return self.trash_cmd(&arg),
             Action::Notify(arg) => return self.notify_cmd(&arg),
             Action::Log(n) => return crate::components::log::tail(&n),

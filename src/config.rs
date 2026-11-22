@@ -64,6 +64,9 @@ pub enum Action {
     State(bool),
     /// `session lock|logout|suspend|hibernate|reboot|poweroff`
     Session(String),
+    Autostart(String),
+    Power(String),
+    Crash(String),
     /// `trash PATH | list | restore NAME`
     Trash(String),
     /// `notify [TEXT | list | clear]`
@@ -117,6 +120,10 @@ pub struct Config {
     pub terminal: String,
     /// command of `ctl session lock`
     pub lock: String,
+    /// window rules (`rule = APP ws=N name=TEXT`)
+    pub rules: Vec<crate::components::window::Rule>,
+    /// warn at this battery percentage (0 = off)
+    pub low_battery: i32,
     /// actions refused when they come over `ctl`
     pub ctl_deny: Vec<String>,
     /// preferred browser, editor, files (the terminal is `terminal`): see settings_preferaps
@@ -165,6 +172,8 @@ impl Default for Config {
             terminal: "foot".into(),
             lock: "loginctl lock-session".into(),
             ctl_deny: Vec::new(),
+            rules: Vec::new(),
+            low_battery: 15,
             prefer: crate::components::settings::settings_preferaps::defaults(),
             menu: "dmenu_run".into(),
             gap: 0,
@@ -236,6 +245,9 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State(rest == "json"),
         "session" => Action::Session(rest.into()),
+        "autostart" => Action::Autostart(rest.into()),
+        "power" => Action::Power(rest.into()),
+        "crash" => Action::Crash(rest.into()),
         "trash" => Action::Trash(rest.into()),
         "notify" => Action::Notify(rest.into()),
         "name" if !rest.is_empty() => Action::Name(rest.into()),
@@ -322,6 +334,8 @@ impl Config {
             "mod" => self.modkey = self.parse_mods(val).map(|m| if m == Mods::default() { self.modkey } else { m })?,
             "terminal" => self.terminal = val.into(),
             "lock" => self.lock = val.into(),
+            "rule" => self.rules.push(crate::components::window::Rule::parse(val).ok_or_else(|| format!("rule: APP [ws=N] [name=TEXT], got {val:?}"))?),
+            "low_battery" => self.low_battery = n(val)?.clamp(0, 100),
             "ctl_deny" => self.ctl_deny = val.split_whitespace().map(String::from).collect(),
             "menu" => self.menu = expand_home(val),
             "gap" => self.gap = n(val)?.max(0),

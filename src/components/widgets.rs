@@ -91,6 +91,16 @@ pub fn parse_vol(s: &str) -> Option<(u32, bool)> {
     Some(((v * 100.0).round() as u32, s.contains("MUTED")))
 }
 
+/// The bar text for a sound device: value and state, always shown. `--` when there is no such device
+/// (no microphone: wpctl has no default source). The bool is "dim" (muted or absent).
+pub fn audio_label(name: &str, v: Option<(u32, bool)>) -> (String, bool) {
+    match v {
+        Some((v, false)) => (format!("{name} {v}% on"), false),
+        Some((v, true)) => (format!("{name} {v}% off"), true),
+        None => (format!("{name} --"), true),
+    }
+}
+
 fn read_vol(target: &str) -> Option<(u32, bool)> {
     let o = Command::new("timeout").args(["1", "wpctl", "get-volume", target]).stderr(Stdio::null()).output().ok()?;
     parse_vol(&String::from_utf8_lossy(&o.stdout))
@@ -233,6 +243,13 @@ mod tests {
         assert_eq!(parse_vol("Volume: 0.50"), Some((50, false)));
         assert_eq!(parse_vol("Volume: 1.00 [MUTED]"), Some((100, true)));
         assert_eq!(parse_vol("nonsense"), None);
+    }
+
+    #[test]
+    fn audio_labels() {
+        assert_eq!(audio_label("mic", Some((80, false))), ("mic 80% on".into(), false));
+        assert_eq!(audio_label("spk", Some((45, true))), ("spk 45% off".into(), true));
+        assert_eq!(audio_label("mic", None), ("mic --".into(), true));
     }
 
     #[test]

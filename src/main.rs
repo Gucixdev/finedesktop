@@ -27,6 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(ipc::ctl(&a));
     }
     init_logging();
+    components::crash::install();
 
     let mut event_loop: EventLoop<'static, Desktop> = EventLoop::try_new()?;
     let display: Display<Desktop> = Display::new()?;
@@ -53,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let hm = components::widgets::now("%H:%M");
             if hm != last_min {
+                st.power_tick();
                 if !last_min.is_empty() {
                     st.emit(components::hooks::Event::minute(&hm));
                 }
@@ -70,6 +72,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.emit(components::hooks::Event::start());
     for cmd in state.config.exec.clone() {
         keys::spawn(&cmd);
+    }
+    state.autostart_run();
+    if let Some(report) = components::crash::take_unseen() {
+        state.notify_cmd(&format!("the last session crashed: {}", report.display()));
     }
     if let [flag, command, ..] = args.as_slice() {
         if flag == "-c" || flag == "--command" {

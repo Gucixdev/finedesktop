@@ -4,7 +4,7 @@
 set -eu
 bin=$(command -v finedesktop) || { echo "links: finedesktop is not on PATH" >&2; exit 1; }
 dir=${BIN_DIR:-$(dirname "$bin")}
-for n in trash notify session screenshot screenrecord menu name log layout state theme mode emit prefer; do
+for n in power autostart crash trash notify session screenshot screenrecord menu name log layout state theme mode emit prefer; do
   ln -sfn "$bin" "$dir/fd-$n"
 done
 echo "links: fd-* in $dir"

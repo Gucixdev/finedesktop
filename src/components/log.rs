@@ -56,6 +56,14 @@ impl Write for Tee {
     }
 }
 
+/// For the panic hook: never waits for the lock.
+pub fn tail_try(n: usize) -> String {
+    match RING.try_lock() {
+        Ok(r) => r.iter().skip(r.len().saturating_sub(n)).cloned().collect::<Vec<_>>().join("\n"),
+        Err(_) => "(log busy)".into(),
+    }
+}
+
 /// The last `n` lines (all kept ones when `arg` is empty or not a number).
 pub fn tail(arg: &str) -> String {
     let n = arg.trim().parse::<usize>().unwrap_or(KEEP);

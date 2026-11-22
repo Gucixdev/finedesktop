@@ -23,3 +23,7 @@ pub mod security;
 pub mod sessions;
 pub mod trash;
 pub mod notification;
+pub mod power;
+pub mod crash;
+pub mod window;
+pub mod autostart;

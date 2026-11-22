@@ -79,3 +79,14 @@ its own name). `fd-notify hi` is `finedesktop ctl notify hi`. Trash needs no com
 - **security**: the socket is 0600; `ctl_deny = spawn quit session` refuses those over ctl. A guard rail, not a sandbox.
 - **settings panel** (`Mod+Shift+W` > Ustawienia): tabs down the left (Motyw, Tryb, Uklad okien, Aplikacje, Sesja,
   Powiadomienia, Kosz, System); Right/Enter opens a tab, Left returns. The panel slides in on a spring (`anim.rs`, `fx.rs`).
+
+- **autostart**: every executable file in `~/.config/finedesktop/autostart/` is started once at login, in name order
+  (after the `exec =` lines). Not executable = ignored. `fd-autostart list|run`.
+- **window rules**: `rule = APP ws=N name=TEXT` (app id, case-insensitive, trailing `*` = prefix); applied once when the
+  window's app id is known. Example: `rule = firefox ws=2 name=web`.
+- **power**: `fd-power` shows battery, charger and profile; `fd-power profile [power-saver|balanced|performance]`
+  (needs `powerprofilesctl`). `low_battery = 15` posts one notification and an `on-user power` event (0 = off).
+- **crash**: a panic writes `~/.local/state/finedesktop/crash-<time>.txt` (message, place, backtrace, last log lines);
+  the next start posts a notification with the path. `fd-crash` lists reports (read ones get `.seen`, nothing is deleted).
+- **sound items**: `spk` and `mic` always show value and state: `spk 45% on`, `mic 80% off`, `mic --` when there is no
+  device (wpctl has no default source, e.g. no microphone plugged in).

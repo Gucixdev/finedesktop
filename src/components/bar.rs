@@ -80,15 +80,10 @@ impl Desktop {
             "cpu" => out.push(it(format!("cpu {}%", sh.cpu), t.fg)),
             "ram" => out.push(it(format!("ram {}%", sh.ram), t.fg)),
             "|" => out.push(it("|", t.dim)),
-            "spk" | "vol" => {
-                if let Some((v, muted)) = sh.vol {
-                    out.push(it(if muted { "spk mute".to_string() } else { format!("spk {v}%") }, if muted { t.dim } else { t.fg }));
-                }
-            }
-            "mic" => {
-                if let Some((v, muted)) = sh.mic {
-                    out.push(it(if muted { "mic mute".to_string() } else { format!("mic {v}%") }, if muted { t.dim } else { t.fg }));
-                }
+            "spk" | "vol" | "mic" => {
+                let (name, v) = if name == "mic" { ("mic", sh.mic) } else { ("spk", sh.vol) };
+                let (text, dim) = super::widgets::audio_label(name, v);
+                out.push(it(text, if dim { t.dim } else { t.fg }));
             }
             "gpu" => {
                 if let Some((g, _)) = sh.gpu {
