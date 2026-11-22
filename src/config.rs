@@ -62,6 +62,8 @@ pub enum Action {
     SendMon(Dir),
     /// true: as JSON
     State(bool),
+    /// `name [WINDOW] TEXT`: the tab/stack label of a window (default: the focused one); `-` restores its title
+    Name(String),
     /// `log [N]`: the last N log lines
     Log(String),
     Vt(u8),
@@ -126,6 +128,8 @@ pub struct Config {
     /// seconds between bar refreshes (clock, cpu, ram ...)
     pub bar_interval: u64,
     pub font_scale: i32,
+    /// height of the tab/stack bar in px; 0 = one text row plus 2 (slimmer than the status bar)
+    pub tab_height: i32,
     /// background widget scripts (`segment`s and widgets/ files) run; modes switch this off
     pub widgets: bool,
     /// the window under the pointer takes keyboard focus when the pointer moves onto it
@@ -166,6 +170,7 @@ impl Default for Config {
             segments: Vec::new(),
             bar_interval: 1,
             font_scale: 1,
+            tab_height: 0,
             widgets: true,
             focus_follows_mouse: true,
             engine: String::new(),
@@ -218,6 +223,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "prefer" => Action::Prefer(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State(rest == "json"),
+        "name" if !rest.is_empty() => Action::Name(rest.into()),
         "log" => Action::Log(rest.into()),
         "screenshot" => Action::Screenshot(rest.into()),
         "screenrecord" => Action::Screenrecord(rest.into()),
@@ -320,6 +326,7 @@ impl Config {
             "bar_right" => self.bar_right = val.split_whitespace().map(String::from).collect(),
             "bar_interval" => self.bar_interval = n(val)?.clamp(1, 3600) as u64,
             "font_scale" => self.font_scale = n(val)?.clamp(1, 4),
+            "tab_height" => self.tab_height = n(val)?.clamp(0, 200),
             "welcome_auto" => self.panels = matches!(val, "on" | "true" | "yes" | "1"),
             "welcome_keys" => self.panel_keys = matches!(val, "on" | "true" | "yes" | "1"),
             "welcome" => self.panel_files.push(val.into()),
@@ -411,6 +418,11 @@ impl Config {
     /// Height of the status bar and of the tab/stack bars: one text row plus padding.
     pub fn bar_height(&self) -> i32 {
         16 * self.font_scale + 6
+    }
+
+    /// Height of the tab / stack bars: a few pixels slimmer than the status bar unless `tab_height` says otherwise.
+    pub fn tab_bar_height(&self) -> i32 {
+        if self.tab_height > 0 { self.tab_height } else { 16 * self.font_scale + 2 }
     }
 
     pub fn modkey_label(&self) -> &'static str {

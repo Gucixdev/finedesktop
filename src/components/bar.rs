@@ -184,7 +184,14 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
     // tab / stack bar of monocle, tabbed, deck ... drawn over the top of the window area
     if let Some(bar) = state.mons[mi].bar {
         let ws = &state.mons[mi].ws[state.mons[mi].cur];
-        let titles: Vec<String> = ws.clients.iter().map(|w| Desktop::win_info(w).2).collect();
+        let titles: Vec<String> = ws
+            .clients
+            .iter()
+            .map(|w| {
+                let (id, _, title) = Desktop::win_info(w);
+                state.names.get(&id).cloned().unwrap_or(title)
+            })
+            .collect();
         let focus = ws.focus;
         let (r, kind) = (bar.rect, bar.kind);
         let key = format!("{name}:tabs");

@@ -57,3 +57,10 @@ A theme is a separate setting from a mode: a theme is how it looks, a mode is ho
 (executables in `<config dir>/scripts/`), Kalkulator, Ustawienia. Type filters, Left goes back (clears the query first), Right/Enter goes in.
 `ctl menu launch` (Mod+W) is the launcher. `ctl log [N]` prints the last N log lines (also kept in
 `~/.local/state/finedesktop/log`); every action, from a key, `ctl` or a hook, is logged as `action: ...`.
+
+## Tab and stack labels
+
+In `tab`, `stack`, `deck` and `monocle` each window is a label in the bar. `ctl name TEXT` renames the focused one,
+`ctl name ID TEXT` a given window (ids are in `ctl state` and in hooks as `FD_WINDOW`), `ctl name -` gives the title
+back. A hook can name windows by app: `on-window-open` running `ctl name "$FD_WINDOW" "$FD_APPID"`.
+The bar is one text row plus 2 px; `tab_height = N` in the config sets it.

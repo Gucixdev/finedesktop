@@ -88,6 +88,8 @@ pub struct Desktop {
     pub prev_win: Option<Window>,
     pub welcome: crate::components::welcome::Welcome,
     pub capture: crate::components::capture::Capture,
+    /// custom tab labels by window id (`ctl name`)
+    pub names: std::collections::HashMap<u32, String>,
     /// None: the panels show on empty workspaces; Some: forced on or off with `welcome`
     pub panel_show: Option<bool>,
     pub bar_cache: std::collections::HashMap<String, (u64, smithay::backend::renderer::element::memory::MemoryRenderBuffer)>,
@@ -180,6 +182,7 @@ impl Desktop {
             prev_win: None,
             welcome: Default::default(),
             capture: Default::default(),
+            names: Default::default(),
             panel_show: None,
             bar_cache: Default::default(),
             solid_ids: Default::default(),
@@ -262,7 +265,7 @@ impl Desktop {
             clients: Vec::new(),
             focus: 0,
             layout: c.layout,
-            params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_height() },
+            params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.tab_bar_height() },
         }
     }
 
@@ -411,6 +414,7 @@ impl Desktop {
         let gone: Vec<u32> = self.known.keys().filter(|id| !alive.contains_key(id)).copied().collect();
         for id in gone {
             let (app, title) = self.known.remove(&id).unwrap_or_default();
+            self.names.remove(&id);
             self.emit(Event::close(id, &app, &title));
         }
         for (id, (app, title)) in alive {
@@ -618,6 +622,25 @@ impl Desktop {
         self.refocus();
     }
 
+    /// `ctl name [WINDOW] TEXT`: set the label shown in the tab / stack bar. `-` goes back to the window title.
+    pub fn name_cmd(&mut self, text: &str) -> String {
+        let (first, rest) = text.split_once(' ').map_or((text, ""), |(a, b)| (a, b.trim()));
+        let (id, label) = match first.parse::<u32>() {
+            Ok(id) if !rest.is_empty() => (id, rest),
+            _ => match self.focused() {
+                Some((_, w)) => (Desktop::win_info(w).0, text.trim()),
+                None => return "error: no focused window".into(),
+            },
+        };
+        if label == "-" {
+            self.names.remove(&id);
+        } else {
+            self.names.insert(id, label.to_string());
+        }
+        self.bar_dirty = true;
+        "ok".into()
+    }
+
     /// (id, app_id, title) of a toplevel, for events and the bar.
     pub fn win_info(w: &Window) -> (u32, String, String) {
         let Some(t) = w.toplevel() else { return (0, String::new(), String::new()) };
@@ -697,12 +720,12 @@ impl Desktop {
                     clients: Vec::new(),
                     focus: 0,
                     layout: c.layout,
-                    params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_height() },
+                    params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.tab_bar_height() },
                 });
             }
             for ws in &mut m.ws {
                 ws.params.gap = c.gap;
-                ws.params.bar_h = c.bar_height();
+                ws.params.bar_h = c.tab_bar_height();
             }
         }
         self.refocus();
@@ -751,6 +774,7 @@ impl Desktop {
             }
             Action::State(true) => return self.report_json(),
             Action::State(false) => return self.report(),
+            Action::Name(text) => return self.name_cmd(&text),
             Action::Log(n) => return crate::components::log::tail(&n),
             Action::Theme(name) => return self.set_theme(&name),
             Action::Mode(name) => return self.set_mode(&name),
