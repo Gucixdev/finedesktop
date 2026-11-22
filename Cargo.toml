@@ -1,0 +1,19 @@
+[package]
+name = "finedesktop"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Minimal keyboard-first Wayland desktop in Rust (smithay), dwl-style tiling"
+
+[dependencies]
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+bitflags = "2.2.1"
+tracing = "0.1"
+
+# vendored on purpose: the whole stack stays readable and patchable
+[dependencies.smithay]
+path = "vendor/smithay"
+default-features = false
+features = ["backend_winit", "wayland_frontend", "desktop"]
+
+[workspace]

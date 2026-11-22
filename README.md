@@ -1,0 +1,36 @@
+# finedesktop-rs
+
+Minimal, keyboard-first Wayland desktop in Rust on [smithay](https://github.com/Smithay/smithay).
+Smithay is vendored in `vendor/smithay` on purpose: the whole stack stays readable and patchable.
+Vision and scope: `../readme.md`.
+
+## Run (nested in a window, for development)
+
+    cargo run -- -c foot          # FD_MOD=alt cargo run  when the host compositor eats Super
+
+## Layouts
+
+Pure geometry in `src/components/engine/layout_engine.rs` (unit-tested, no smithay types):
+`tile` `float` `monocle` `deck` `grid` `stack` `tab`. New layout = one enum variant + one `match` arm.
+Layouts parked for later live in `src/unused/screen_mode/`.
+
+## Keys (Mod = Super, or Alt with `FD_MOD=alt`)
+
+| key | action |
+|---|---|
+| Mod+Return / Mod+W | terminal (`$TERMINAL`, default foot) / menu (`$FD_MENU`) |
+| Mod+Q, Mod+Shift+C | close focused |
+| Mod+Shift+Q | quit |
+| Mod+J / Mod+K | focus next / previous |
+| Mod+Shift+Return | move focused to master |
+| Mod+Space / Mod+Shift+Space | next / previous layout |
+| Mod+T F M D G S Y | tile float monocle deck grid stack tab |
+| Mod+H / Mod+L | master width - / + |
+| Mod+I / Mod+Shift+I | more / fewer masters |
+
+## State
+
+Works nested (winit backend): tiling verified with two real foot clients.
+Not done yet: DRM/libinput backend (real session), drawing the tab/stack bar, tags/workspaces,
+layer-shell (bar, menu), per-output layouts, config file, hooks.
+Key actions are wired but only the layout math is covered by tests (`cargo test`).
