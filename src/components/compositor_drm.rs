@@ -113,6 +113,20 @@ pub fn init(event_loop: &mut EventLoop<Desktop>, state: &mut Desktop) -> Result<
     let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
     let node = DrmNode::from_path(&path).ok();
 
+    // zwp_linux_dmabuf_v1 with feedback: the main device is the render node of this gpu
+    let main_dev = node.as_ref().map(|n| n.node_with_type(smithay::backend::drm::NodeType::Render).and_then(|r| r.ok()).unwrap_or(*n).dev_id());
+    match main_dev {
+        Some(dev) => match smithay::wayland::dmabuf::DmabufFeedbackBuilder::new(dev, render_formats.iter().copied()).build() {
+            Ok(fb) => {
+                let g = state.dmabuf_state.create_global_with_default_feedback::<Desktop>(&state.display_handle, &fb);
+                state.dmabuf_global = Some(g);
+                tracing::info!(dev, "linux-dmabuf offered");
+            }
+            Err(e) => tracing::warn!("linux-dmabuf feedback: {e}; the global is not offered"),
+        },
+        None => tracing::warn!("linux-dmabuf: no drm node for the gpu; the global is not offered"),
+    }
+
     // outputs: one per connected connector, each on its own free crtc
     let res = drm.resource_handles()?;
     let mut used: Vec<crtc::Handle> = Vec::new();
@@ -298,6 +312,12 @@ fn render_with(state: &mut Desktop, d: &mut Drm, crtc: crtc::Handle) {
 }
 
 impl Drm {
+    /// Can the renderer import this client buffer? (answers `zwp_linux_dmabuf_v1` create requests)
+    pub fn import_dmabuf(&mut self, d: &smithay::backend::allocator::dmabuf::Dmabuf) -> bool {
+        use smithay::backend::renderer::ImportDma;
+        self.renderer.import_dmabuf(d, None).is_ok()
+    }
+
     pub fn change_vt(&mut self, vt: i32) {
         if let Err(e) = self.session.change_vt(vt) {
             tracing::warn!("vt switch to {vt}: {e}");
