@@ -15,3 +15,5 @@ pub mod welcome;
 pub mod capture;
 pub mod log;
 pub mod launcher;
+pub mod fsm;
+pub mod hfsm;

@@ -42,6 +42,16 @@ impl Id {
         })
     }
 
+    /// Where "back" leads: the menu is a hierarchy, and opening any level opens the path to it.
+    pub fn parent(self) -> Option<Id> {
+        match self {
+            Id::Root | Id::Run => None,
+            Id::Apps | Id::Games | Id::Clip | Id::Calc | Id::Settings => Some(Id::Root),
+            Id::Prefer | Id::Themes | Id::Modes | Id::Layouts => Some(Id::Settings),
+            Id::AllApps => Some(Id::Prefer),
+        }
+    }
+
     fn title(self) -> &'static str {
         match self {
             Id::Root => "Menu",
@@ -213,11 +223,8 @@ impl Desktop {
     }
 
     pub fn menu_open(&mut self, id: Id) {
-        // opening a sub-menu directly still has the main menu under it, so backspace goes up
-        let mut stack = vec![self.menu_level(Id::Root)];
-        if id != Id::Root {
-            stack.push(self.menu_level(id));
-        }
+        // opening a sub-menu directly still has its parents under it (hfsm path), so back goes up
+        let stack = super::hfsm::path_of(id, Id::parent).into_iter().map(|i| self.menu_level(i)).collect();
         self.menu = Some(Menu { stack, ..Menu::default() });
         self.bar_dirty = true;
     }
@@ -483,5 +490,16 @@ impl Desktop {
             }
             Act::Open(_) | Act::PickPrefer(_) | Act::Nop | Act::Head => "ok".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_a_deep_level_opens_the_path_to_it() {
+        let path = crate::components::hfsm::path_of(Id::Themes, Id::parent);
+        assert_eq!(path, [Id::Root, Id::Settings, Id::Themes]);
     }
 }
