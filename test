@@ -68,6 +68,7 @@ ctl emit ping hello >/dev/null; ctl bar toggle >/dev/null; ctl bar toggle >/dev/
 kill "$(cat "$log/sub.pid")" 2>/dev/null
 grep -q '^user ping hello' "$log/sub.out" && ok "subscribe streams user events" || bad "subscribe: $(cat "$log/sub.out")"
 
+ctl state json | python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["monitors"][0]; assert m["workspaces"]==9 and d["theme"] and isinstance(d["menu"],bool) and isinstance(m["windows"],list)' && ok "state json parses" || bad "state json"
 [ "$(ctl state | head -1 | grep -c monitor)" = 1 ] && ok "state reports a monitor" || bad "no monitor"
 out=$(ctl state | head -1); W=$(echo "$out" | sed -E 's/.* ([0-9]+)x[0-9]+@.*/\1/')
 

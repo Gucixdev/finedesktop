@@ -744,7 +744,8 @@ impl Desktop {
                     Err(e) => format!("error: {e}"),
                 };
             }
-            Action::State => return self.report(),
+            Action::State(true) => return self.report_json(),
+            Action::State(false) => return self.report(),
             Action::Theme(name) => return self.set_theme(&name),
             Action::Mode(name) => return self.set_mode(&name),
             Action::Emit(text) => {
@@ -849,6 +850,56 @@ impl Desktop {
     }
 
     /// Human and machine readable snapshot, used by `finedesktop ctl state` and the tests.
+    fn title_of(&self, c: &Window) -> String {
+        c.toplevel()
+            .map(|t| {
+                smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+                    s.data_map
+                        .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().ok().and_then(|d| d.title.clone()))
+                        .unwrap_or_default()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// `ctl state json`: the same facts as `state`, for programs and agents, plus theme, mode, menu and widget.
+    pub fn report_json(&self) -> String {
+        let mut mons = Vec::new();
+        for (mi, m) in self.mons.iter().enumerate() {
+            let g = self.space.output_geometry(&m.output).unwrap_or_default();
+            let ws = &m.ws[m.cur];
+            let mut wins = Vec::new();
+            for (wi, w) in m.ws.iter().enumerate() {
+                for (ci, c) in w.clients.iter().enumerate() {
+                    let geo = match self.space.element_geometry(c) {
+                        Some(g) => format!("[{},{},{},{}]", g.loc.x, g.loc.y, g.size.w, g.size.h),
+                        None => "null".into(),
+                    };
+                    wins.push(format!(
+                        "{{\"ws\":{},\"index\":{ci},\"title\":{},\"geometry\":{geo},\"focused\":{}}}",
+                        wi + 1,
+                        json_str(&self.title_of(c)),
+                        wi == m.cur && ci == w.focus && mi == self.focus_mon,
+                    ));
+                }
+            }
+            mons.push(format!(
+                "{{\"index\":{mi},\"name\":{},\"focused\":{},\"geometry\":[{},{},{},{}],\"workspace\":{},\"workspaces\":{},\"layout\":{},\"mfact\":{:.2},\"nmaster\":{},\"windows\":[{}]}}",
+                json_str(&m.output.name()), mi == self.focus_mon, g.loc.x, g.loc.y, g.size.w, g.size.h,
+                m.cur + 1, m.ws.len(), json_str(ws.layout.name()), ws.params.mfact, ws.params.nmaster, wins.join(","),
+            ));
+        }
+        let page = self.welcome.page().map(|p| p.title.clone()).unwrap_or_default();
+        format!(
+            "{{\"theme\":{},\"menu\":{},\"welcome\":{},\"monitors\":[{}]}}",
+            json_str(&self.config.theme.name),
+            self.menu.is_some(),
+            json_str(&page),
+            mons.join(","),
+        )
+    }
+
     pub fn report(&self) -> String {
         let mut out = String::new();
         for (mi, m) in self.mons.iter().enumerate() {
@@ -895,5 +946,35 @@ fn set_tiled(st: &mut smithay::wayland::shell::xdg::ToplevelState, on: bool) {
         } else {
             st.states.unset(s);
         }
+    }
+}
+
+/// A JSON string literal: quotes, backslashes and control characters escaped.
+pub fn json_str(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::json_str;
+
+    #[test]
+    fn strings_are_escaped() {
+        assert_eq!(json_str("a\"b\\c\n"), "\"a\\\"b\\\\c\\n\"");
+        assert_eq!(json_str("\u{1}"), "\"\\u0001\"");
+        assert_eq!(json_str("zażółć"), "\"zażółć\"");
     }
 }

@@ -60,7 +60,8 @@ pub enum Action {
     Tag(WsSel),
     FocusMon(Dir),
     SendMon(Dir),
-    State,
+    /// true: as JSON
+    State(bool),
     Vt(u8),
     /// `theme NAME`, `theme list`
     Theme(String),
@@ -212,7 +213,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "layouts" => Action::Layouts,
         "prefer" => Action::Prefer(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
-        "state" => Action::State,
+        "state" => Action::State(rest == "json"),
         "zoom" => Action::Zoom,
         "theme" if !rest.is_empty() => Action::Theme(rest.into()),
         "mode" if !rest.is_empty() => Action::Mode(rest.into()),
