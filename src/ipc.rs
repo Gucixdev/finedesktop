@@ -20,6 +20,7 @@ pub fn init(handle: &LoopHandle<'static, Desktop>, wayland_name: &str) -> std::i
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
     listener.set_nonblocking(true)?;
+    crate::components::security::lock_socket(&path);
     handle
         .insert_source(Generic::new(listener, Interest::READ, Mode::Level), |_, listener, state| {
             // Safety: the listener is not dropped while the source is alive.
@@ -48,6 +49,10 @@ fn serve(stream: UnixStream, state: &mut Desktop) {
         state.subs.push(stream);
         return;
     }
+    if crate::components::security::denied(&state.config.ctl_deny, &line) {
+        let _ = (&stream).write_all(b"error: denied by ctl_deny\n");
+        return;
+    }
     let reply = match crate::config::parse_action(&line) {
         Ok(action) => {
             let shot = matches!(action, crate::config::Action::Screenshot(_));
@@ -70,6 +75,31 @@ fn serve(stream: UnixStream, state: &mut Desktop) {
 
 /// `finedesktop ctl ...` client side. Returns the process exit code.
 pub fn ctl(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("trash") {
+        return trash_local(&args[1..]);
+    }
+    ctl_one(args)
+}
+
+/// Files only, so no socket: paths are taken relative to the shell that typed them, one trashed per argument.
+fn trash_local(args: &[String]) -> i32 {
+    use crate::components::trash::run;
+    if args.is_empty() || args[0] == "list" || args[0] == "restore" {
+        let out = run(&args.join(" "));
+        println!("{out}");
+        return i32::from(out.starts_with("error:"));
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut code = 0;
+    for a in args {
+        let out = run(&cwd.join(a).to_string_lossy());
+        println!("{out}");
+        code |= i32::from(out.starts_with("error:"));
+    }
+    code
+}
+
+fn ctl_one(args: &[String]) -> i32 {
     let path = std::env::var_os("FD_SOCK").map(PathBuf::from).or_else(newest_socket);
     let Some(path) = path else {
         eprintln!("finedesktop ctl: no running finedesktop (set FD_SOCK)");

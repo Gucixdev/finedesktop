@@ -18,6 +18,10 @@ pub enum Id {
     Calc,
     Settings,
     Prefer,
+    Session,
+    Notes,
+    Trash,
+    System,
     Themes,
     Modes,
     Layouts,
@@ -36,6 +40,10 @@ impl Id {
             "clip" | "clipboard" => Id::Clip,
             "calc" => Id::Calc,
             "settings" => Id::Settings,
+            "session" => Id::Session,
+            "notes" | "notifications" => Id::Notes,
+            "trash" => Id::Trash,
+            "system" => Id::System,
             "prefer" => Id::Prefer,
             "themes" | "theme" => Id::Themes,
             "modes" | "mode" => Id::Modes,
@@ -49,7 +57,7 @@ impl Id {
         match self {
             Id::Root | Id::Run => None,
             Id::Apps | Id::Games | Id::Scripts | Id::Clip | Id::Calc | Id::Settings => Some(Id::Root),
-            Id::Prefer | Id::Themes | Id::Modes | Id::Layouts => Some(Id::Settings),
+            Id::Prefer | Id::Session | Id::Notes | Id::Trash | Id::System | Id::Themes | Id::Modes | Id::Layouts => Some(Id::Settings),
             Id::AllApps => Some(Id::Prefer),
         }
     }
@@ -65,6 +73,10 @@ impl Id {
             Id::Clip => "Schowek",
             Id::Calc => "Kalkulator",
             Id::Settings => "Ustawienia",
+            Id::Session => "Sesja",
+            Id::Notes => "Powiadomienia",
+            Id::Trash => "Kosz",
+            Id::System => "System",
             Id::Prefer => "Preferowane aplikacje",
             Id::Themes => "Motyw",
             Id::Modes => "Tryb",
@@ -89,6 +101,8 @@ pub enum Act {
     Reload,
     ReloadEngine,
     EditConfig,
+    /// any ctl line, so a tab entry is exactly what a script would type
+    Ctl(String),
     Nop,
     /// a section title in a list: drawn, never selected
     Head,
@@ -104,6 +118,16 @@ pub struct Entry {
 pub struct Level {
     pub id: Id,
     pub items: Vec<Entry>,
+}
+
+/// The left column of the settings panel.
+#[derive(Debug, Clone)]
+pub struct Tabs {
+    pub labels: Vec<String>,
+    pub active: usize,
+    pub focused: bool,
+    /// the level the active tab opens
+    pub id: Option<Id>,
 }
 
 /// One drawn line of the list.
@@ -214,11 +238,27 @@ impl Desktop {
             Id::Scripts => script_entries(),
             Id::Clip => clip_entries(),
             Id::Calc => vec![e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop)],
+            // the tabs of the settings panel, drawn down the left side
             Id::Settings => vec![
                 e("Motyw", Act::Open(Id::Themes)),
                 e("Tryb", Act::Open(Id::Modes)),
                 e("Uklad okien", Act::Open(Id::Layouts)),
-                e("Preferowane aplikacje", Act::Open(Id::Prefer)),
+                e("Aplikacje", Act::Open(Id::Prefer)),
+                e("Sesja", Act::Open(Id::Session)),
+                e("Powiadomienia", Act::Open(Id::Notes)),
+                e("Kosz", Act::Open(Id::Trash)),
+                e("System", Act::Open(Id::System)),
+            ],
+            Id::Session => ["lock", "logout", "suspend", "hibernate", "reboot", "poweroff"].iter().map(|s| e(s, Act::Ctl(format!("session {s}")))).collect(),
+            Id::Notes => {
+                let v: Vec<Entry> = self.notes.list.iter().rev().map(|n| e(&format!("{}  {}", n.stamp, n.text), Act::Nop)).collect();
+                if v.is_empty() { vec![e("no notifications (ctl notify TEXT)", Act::Nop)] } else { v }
+            }
+            Id::Trash => {
+                let v: Vec<Entry> = super::trash::list().into_iter().map(|(n, p)| e(&format!("{n}  <-  {p}"), Act::Ctl(format!("trash restore {n}")))).collect();
+                if v.is_empty() { vec![e("trash is empty (ctl trash PATH)", Act::Nop)] } else { v }
+            }
+            Id::System => vec![
                 e("Przeladuj config", Act::Reload),
                 e("Przeladuj silniki", Act::ReloadEngine),
                 e("Edytuj config", Act::EditConfig),
@@ -243,6 +283,7 @@ impl Desktop {
     /// The launcher: just this level, so backspace on an empty query closes it, like dmenu.
     pub fn menu_launch(&mut self) {
         self.menu = Some(Menu { stack: vec![self.menu_level(Id::Run)], ..Menu::default() });
+        self.fx.panel_open();
         self.bar_dirty = true;
     }
 
@@ -250,6 +291,7 @@ impl Desktop {
         // opening a sub-menu directly still has its parents under it (hfsm path), so back goes up
         let stack = super::hfsm::path_of(id, Id::parent).into_iter().map(|i| self.menu_level(i)).collect();
         self.menu = Some(Menu { stack, ..Menu::default() });
+        self.fx.panel_open();
         self.bar_dirty = true;
     }
 }
@@ -315,6 +357,25 @@ impl Menu {
 
     pub fn selectable(&self) -> usize {
         self.level().items.iter().filter(|i| !matches!(i.act, Act::Head)).count()
+    }
+
+    /// The settings panel is tabbed with the tabs on the left: while the stack is inside `Id::Settings` the tabs are the
+    /// entries of that level. `focused` = the cursor is on the tabs (the right side then previews the tab under it).
+    pub fn tabs(&self) -> Option<Tabs> {
+        let si = self.stack.iter().position(|l| l.id == Id::Settings)?;
+        let items = &self.stack[si].items;
+        let labels = items.iter().map(|i| i.label.clone()).collect();
+        let (active, focused) = if si + 1 == self.stack.len() {
+            (self.sel.min(items.len().saturating_sub(1)), true)
+        } else {
+            let open = self.stack[si + 1].id;
+            (items.iter().position(|i| matches!(i.act, Act::Open(id) if id == open)).unwrap_or(0), false)
+        };
+        let id = match items.get(active).map(|i| &i.act) {
+            Some(Act::Open(id)) => Some(*id),
+            _ => None,
+        };
+        Some(Tabs { labels, active, focused, id })
     }
 
     /// "Menu > Aplikacje > Flatpak"
@@ -398,8 +459,12 @@ impl Desktop {
                         menu.sel = 0;
                         self.menu_recalc();
                     } else if menu.stack.len() > 1 {
-                        menu.stack.pop();
-                        menu.sel = 0;
+                        let gone = menu.stack.pop().map(|l| l.id);
+                        // back on the tabs of the settings panel: the cursor stays on the tab we came from
+                        menu.sel = match (menu.level().id, gone) {
+                            (Id::Settings, Some(g)) => menu.level().items.iter().position(|i| matches!(i.act, Act::Open(id) if id == g)).unwrap_or(0),
+                            _ => 0,
+                        };
                     }
                 }
                 "right" => return self.menu_enter(),
@@ -509,6 +574,10 @@ impl Desktop {
                 crate::keys::spawn(&format!("printf '%s' '{text}' | wl-copy"));
                 "ok".into()
             }
+            Act::Ctl(line) => match crate::config::parse_action(&line) {
+                Ok(a) => self.run_action(a),
+                Err(e) => format!("error: {e}"),
+            },
             Act::Reload => self.run_action(Action::Reload),
             Act::ReloadEngine => self.run_action(Action::ReloadEngine),
             Act::EditConfig => {

@@ -19,6 +19,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.first().map(String::as_str) == Some("ctl") {
         std::process::exit(ipc::ctl(&args[1..]));
     }
+    // busybox style: `fd-notify hi` is `finedesktop ctl notify hi` (see the `links` script), so each thing is its own command
+    let exe = std::env::args().next().map(|a| std::path::Path::new(&a).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default();
+    if let Some(cmd) = exe.strip_prefix("fd-") {
+        let mut a = vec![cmd.to_string()];
+        a.extend(args.iter().cloned());
+        std::process::exit(ipc::ctl(&a));
+    }
     init_logging();
 
     let mut event_loop: EventLoop<'static, Desktop> = EventLoop::try_new()?;

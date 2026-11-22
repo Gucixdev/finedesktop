@@ -62,6 +62,12 @@ pub enum Action {
     SendMon(Dir),
     /// true: as JSON
     State(bool),
+    /// `session lock|logout|suspend|hibernate|reboot|poweroff`
+    Session(String),
+    /// `trash PATH | list | restore NAME`
+    Trash(String),
+    /// `notify [TEXT | list | clear]`
+    Notify(String),
     /// `name [WINDOW] TEXT`: the tab/stack label of a window (default: the focused one); `-` restores its title
     Name(String),
     /// `log [N]`: the last N log lines
@@ -109,6 +115,10 @@ pub struct Binding {
 pub struct Config {
     pub modkey: Mods,
     pub terminal: String,
+    /// command of `ctl session lock`
+    pub lock: String,
+    /// actions refused when they come over `ctl`
+    pub ctl_deny: Vec<String>,
     /// preferred browser, editor, files (the terminal is `terminal`): see settings_preferaps
     pub prefer: std::collections::BTreeMap<String, String>,
     pub menu: String,
@@ -153,6 +163,8 @@ impl Default for Config {
         Config {
             modkey: Mods { logo: true, ..Mods::default() },
             terminal: "foot".into(),
+            lock: "loginctl lock-session".into(),
+            ctl_deny: Vec::new(),
             prefer: crate::components::settings::settings_preferaps::defaults(),
             menu: "dmenu_run".into(),
             gap: 0,
@@ -223,6 +235,9 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "prefer" => Action::Prefer(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State(rest == "json"),
+        "session" => Action::Session(rest.into()),
+        "trash" => Action::Trash(rest.into()),
+        "notify" => Action::Notify(rest.into()),
         "name" if !rest.is_empty() => Action::Name(rest.into()),
         "log" => Action::Log(rest.into()),
         "screenshot" => Action::Screenshot(rest.into()),
@@ -306,6 +321,8 @@ impl Config {
         match key {
             "mod" => self.modkey = self.parse_mods(val).map(|m| if m == Mods::default() { self.modkey } else { m })?,
             "terminal" => self.terminal = val.into(),
+            "lock" => self.lock = val.into(),
+            "ctl_deny" => self.ctl_deny = val.split_whitespace().map(String::from).collect(),
             "menu" => self.menu = expand_home(val),
             "gap" => self.gap = n(val)?.max(0),
             "mfact" => self.mfact = f(val)?.clamp(0.1, 0.9),
@@ -490,7 +507,7 @@ mod tests {
         let mut c = Config::default();
         assert!(c.apply(DEFAULT).is_empty());
         assert_eq!(c.bar_left, vec!["tags", "layout"]);
-        assert_eq!(c.bar_right.first().map(String::as_str), Some("spk"));
+        assert_eq!(c.bar_right.first().map(String::as_str), Some("notify"));
         assert_eq!(c.bar_right.last().map(String::as_str), Some("time"));
     }
 

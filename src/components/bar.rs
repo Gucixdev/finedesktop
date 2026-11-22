@@ -105,6 +105,11 @@ impl Desktop {
                     out.push(it(format!("bat {p}%{}", if chg { "+" } else { "" }), if p <= 15 && !chg { t.urgent } else { t.fg }));
                 }
             }
+            "notify" => {
+                if let Some(n) = self.notes.current() {
+                    out.push(it(format!("! {}", n.text.chars().take(60).collect::<String>()), t.urgent));
+                }
+            }
             "date" => out.push(it(widgets::now("%Y-%m-%d"), t.fg)),
             "clock" | "time" => out.push(it(widgets::now("%H:%M"), t.accent)),
             other => {
@@ -269,26 +274,42 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             }
         }
     }
-    // the menu: one big centred list panel above everything, on the monitor that has focus
+    // the menu: one big centred list panel above everything, on the monitor that has focus. The settings panel has
+    // its tabs down the left; the panel slides in on a spring.
     if mi == state.focus_mon {
+        let moving = state.fx.step(std::time::Instant::now());
+        if moving {
+            state.bar_dirty = true;
+        }
+        let off = state.fx.panel_offset();
         if let Some(menu) = state.menu.as_ref() {
             // 2x text on a big screen; the panel takes most of it, like the old dmenu setup
             let ms = if geo.size.h >= 900 { scale * 2 } else { scale };
             let lh = 16 * ms;
-            let w = (geo.size.w * 3 / 5).clamp(320.min(geo.size.w), 110 * 8 * ms).min(geo.size.w - 16);
+            let tabs = menu.tabs();
+            let tabw = tabs.as_ref().map_or(0, |t| (t.labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as i32 + 3) * 8 * ms);
+            let wide = if tabs.is_some() { 4 } else { 3 };
+            let w = (geo.size.w * wide / 5).clamp(320.min(geo.size.w), 110 * 8 * ms + tabw).min(geo.size.w - 16);
             let max_h = (geo.size.h - bh) * 4 / 5;
             let cap = ((max_h - 2 * pad) / lh - 2).max(1) as usize;
-            let (all, sel_row) = menu.rows();
-            let nrows = all.len().min(cap);
-            let first = (sel_row + 1).saturating_sub(nrows);
+            // the right side: the open level, or (cursor on the tabs) a preview of the tab under the cursor
+            let (all, sel_row) = match &tabs {
+                Some(t) if t.focused => {
+                    let rows = t.id.map(|id| state.menu_level(id).items.into_iter().filter(|e| !matches!(e.act, super::menu::Act::Head)).map(|e| super::menu::Row::Item(e.label)).collect()).unwrap_or_default();
+                    (rows, usize::MAX)
+                }
+                _ => menu.rows(),
+            };
+            let nrows = all.len().max(tabs.as_ref().map_or(0, |t| t.labels.len())).min(cap).max(1);
+            let first = if sel_row == usize::MAX { 0 } else { (sel_row + 1).saturating_sub(nrows) };
             let shown: Vec<super::menu::Row> = all.iter().skip(first).take(nrows).cloned().collect();
-            let sel = sel_row - first;
+            let sel = sel_row.wrapping_sub(first);
             let head = format!("{} > {}_", menu.crumbs(), menu.query);
             let count = format!("{}/{}", menu.visible().len(), menu.selectable());
             let h = (nrows as i32 + 2) * lh + 2 * pad;
             if w > 80 && h > 32 {
                 let key = format!("{name}:menu");
-                let hash = hash_of(&(format!("{shown:?}"), sel, &head, &count, w, h, t.name.clone(), ms));
+                let hash = hash_of(&(format!("{shown:?}{tabs:?}"), sel, &head, &count, w, h, t.name.clone(), ms));
                 let th = t.clone();
                 let buf = state.cached(key, w, h, hash, |cv| {
                     cv.rect(0, 0, w, h, th.border_focus);
@@ -296,23 +317,50 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                     cv.text(pad, pad, &head, th.accent, ms, w - pad);
                     let cw = Canvas::text_width(&count, ms);
                     cv.text(w - cw - pad, pad, &count, th.dim, ms, w);
+                    if let Some(tb) = &tabs {
+                        cv.rect(tabw, 2 * lh + pad, 1, h - 2 * lh - pad - 2, th.border_normal);
+                        for (n, l) in tb.labels.iter().enumerate().take(nrows) {
+                            let y = pad + (n as i32 + 2) * lh;
+                            let on = n == tb.active;
+                            if on {
+                                cv.rect(2, y, tabw - 2, lh, if tb.focused { th.sel_bg } else { th.bar_bg });
+                            }
+                            let fg = match (on, tb.focused) {
+                                (true, true) => th.sel_fg,
+                                (true, false) => th.accent,
+                                _ => th.dim,
+                            };
+                            cv.text(pad, y, l, fg, ms, tabw - 2);
+                        }
+                    }
+                    let x0 = if tabs.is_some() { tabw + pad } else { pad };
                     for (n, r) in shown.iter().enumerate() {
                         let y = pad + (n as i32 + 2) * lh;
                         match r {
                             super::menu::Row::Head(t) => {
-                                cv.text(pad, y, &format!("-- {t} --"), th.dim, ms, w - pad);
+                                cv.text(x0, y, &format!("-- {t} --"), th.dim, ms, w - pad);
                             }
                             super::menu::Row::Item(s) => {
                                 if n == sel {
-                                    cv.rect(2, y, w - 4, lh, th.sel_bg);
+                                    cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
                                 }
-                                cv.text(pad * 2, y, s, if n == sel { th.sel_fg } else { th.fg }, ms, w - pad);
+                                let fg = if n == sel {
+                                    th.sel_fg
+                                } else if tabs.as_ref().is_some_and(|t| t.focused) {
+                                    th.dim
+                                } else {
+                                    th.fg
+                                };
+                                cv.text(x0 + if tabs.is_some() { 0 } else { pad }, y, s, fg, ms, w - pad);
                             }
                         }
                     }
                 });
-                let (x, y) = ((geo.size.w - w) / 2, bh + (geo.size.h - bh - h) / 2);
-                if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (x as f64, y as f64), &buf, None, None, None, Kind::Unspecified) {
+                // slides down from above and fades up as the spring settles
+                let slide = (off * 40.0 * ms as f32) as i32;
+                let alpha = (1.0 - off).clamp(0.0, 1.0);
+                let (x, y) = ((geo.size.w - w) / 2, bh + (geo.size.h - bh - h) / 2 - slide);
+                if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (x as f64, y as f64), &buf, Some(alpha), None, None, Kind::Unspecified) {
                     out.insert(0, e.into());
                 }
             }

@@ -1,0 +1,10 @@
+#!/bin/sh
+# links - give each ctl action its own command: fd-trash, fd-notify, fd-session, fd-screenshot ... next to finedesktop.
+# They are symlinks to the one binary, which looks at its own name. Set BIN_DIR to put them somewhere else.
+set -eu
+bin=$(command -v finedesktop) || { echo "links: finedesktop is not on PATH" >&2; exit 1; }
+dir=${BIN_DIR:-$(dirname "$bin")}
+for n in trash notify session screenshot screenrecord menu name log layout state theme mode emit prefer; do
+  ln -sfn "$bin" "$dir/fd-$n"
+done
+echo "links: fd-* in $dir"

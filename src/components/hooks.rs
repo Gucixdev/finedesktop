@@ -67,6 +67,9 @@ impl Event {
     pub fn user(name: &str, text: &str) -> Event {
         Event::new("user", format!("user {name} {text}"), vec![("FD_NAME", name.into()), ("FD_TEXT", text.into())])
     }
+    pub fn notify(id: u32, text: &str) -> Event {
+        Event::new("notify", format!("notify {id} {text}"), vec![("FD_NOTE", id.to_string()), ("FD_TEXT", text.into())])
+    }
     pub fn minute(hhmm: &str) -> Event {
         Event::new("minute", format!("minute {hhmm}"), vec![("FD_TIME", hhmm.into())])
     }
@@ -86,14 +89,15 @@ impl Event {
             "mode" => "on-mode-change",
             "reload" => "on-reload",
             "user" => "on-user",
+            "notify" => "on-notify",
             _ => "on-minute",
         }
     }
 }
 
-pub const HOOKS: [&str; 13] = [
+pub const HOOKS: [&str; 14] = [
     "on-start", "on-window-open", "on-window-close", "on-focus", "on-title-change", "on-tag-change",
-    "on-layout-change", "on-output", "on-theme-change", "on-mode-change", "on-reload", "on-user", "on-minute",
+    "on-layout-change", "on-output", "on-theme-change", "on-mode-change", "on-reload", "on-user", "on-notify", "on-minute",
 ];
 
 const MODES: [(&str, &str); 5] = [

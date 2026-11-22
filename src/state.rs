@@ -88,6 +88,8 @@ pub struct Desktop {
     pub prev_win: Option<Window>,
     pub welcome: crate::components::welcome::Welcome,
     pub capture: crate::components::capture::Capture,
+    pub notes: crate::components::notification::notts::Notes,
+    pub fx: crate::components::fx::Fx,
     /// custom tab labels by window id (`ctl name`)
     pub names: std::collections::HashMap<u32, String>,
     /// None: the panels show on empty workspaces; Some: forced on or off with `welcome`
@@ -182,6 +184,8 @@ impl Desktop {
             prev_win: None,
             welcome: Default::default(),
             capture: Default::default(),
+            notes: Default::default(),
+            fx: Default::default(),
             names: Default::default(),
             panel_show: None,
             bar_cache: Default::default(),
@@ -775,6 +779,9 @@ impl Desktop {
             Action::State(true) => return self.report_json(),
             Action::State(false) => return self.report(),
             Action::Name(text) => return self.name_cmd(&text),
+            Action::Session(what) => return self.session_cmd(&what),
+            Action::Trash(arg) => return self.trash_cmd(&arg),
+            Action::Notify(arg) => return self.notify_cmd(&arg),
             Action::Log(n) => return crate::components::log::tail(&n),
             Action::Theme(name) => return self.set_theme(&name),
             Action::Mode(name) => return self.set_mode(&name),

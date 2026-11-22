@@ -64,3 +64,18 @@ In `tab`, `stack`, `deck` and `monocle` each window is a label in the bar. `ctl 
 `ctl name ID TEXT` a given window (ids are in `ctl state` and in hooks as `FD_WINDOW`), `ctl name -` gives the title
 back. A hook can name windows by app: `on-window-open` running `ctl name "$FD_WINDOW" "$FD_APPID"`.
 The bar is one text row plus 2 px; `tab_height = N` in the config sets it.
+
+## Own commands, not only `ctl`
+
+Every action is also its own command: `./links` makes `fd-trash`, `fd-notify`, `fd-session`, `fd-screenshot`,
+`fd-screenrecord`, `fd-menu`, `fd-name`, `fd-log`, `fd-layout`, ... next to `finedesktop` (symlinks, the binary reads
+its own name). `fd-notify hi` is `finedesktop ctl notify hi`. Trash needs no compositor at all.
+
+- **trash**: `fd-trash FILE...` moves into the freedesktop trash (`~/.local/share/Trash`), `fd-trash list`,
+  `fd-trash restore NAME`. Never deletes; emptying is yours.
+- **notify**: `fd-notify TEXT` shows in the bar for 8 s (bar item `notify`), `fd-notify list|clear`, hook `on-notify`
+  (`FD_NOTE`, `FD_TEXT`). A D-Bus front for `notify-send` is not written.
+- **session**: `fd-session lock|logout|suspend|hibernate|reboot|poweroff` (`lock = CMD` in the config for the locker).
+- **security**: the socket is 0600; `ctl_deny = spawn quit session` refuses those over ctl. A guard rail, not a sandbox.
+- **settings panel** (`Mod+Shift+W` > Ustawienia): tabs down the left (Motyw, Tryb, Uklad okien, Aplikacje, Sesja,
+  Powiadomienia, Kosz, System); Right/Enter opens a tab, Left returns. The panel slides in on a spring (`anim.rs`, `fx.rs`).
