@@ -328,7 +328,12 @@ impl Desktop {
                 return "ok".into();
             }
             "launch" | "run" => {
-                self.menu_launch();
+                // a toggle, so the same key that opened the launcher closes it
+                if self.menu.is_some() {
+                    self.menu = None;
+                } else {
+                    self.menu_launch();
+                }
                 return "ok".into();
             }
             _ => {}
