@@ -39,6 +39,7 @@ pub enum Action {
     Close,
     Quit,
     Reload,
+    ReloadEngine,
     Focus(Dir),
     /// `focus left|right|up|down`: the window in that direction, or the monitor beyond it
     FocusDir(crate::components::engine::focus_engine::Cardinal),
@@ -117,6 +118,8 @@ pub struct Config {
     pub widgets: bool,
     /// the window under the pointer takes keyboard focus when the pointer moves onto it
     pub focus_follows_mouse: bool,
+    /// path of libfinedesktop_engine.so (hot-reloadable layout/focus engines); empty = the default below
+    pub engine: String,
     /// xkb layout list and options, e.g. `kb_layout = pl,gb` and `kb_options = grp:shifts_toggle`
     pub kb_layout: String,
     pub kb_options: String,
@@ -152,6 +155,7 @@ impl Default for Config {
             font_scale: 1,
             widgets: true,
             focus_follows_mouse: true,
+            engine: String::new(),
             kb_layout: String::new(),
             kb_options: String::new(),
             enter: String::new(),
@@ -196,6 +200,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "close" => Action::Close,
         "quit" => Action::Quit,
         "reload" => Action::Reload,
+        "reload-engine" => Action::ReloadEngine,
         "state" => Action::State,
         "zoom" => Action::Zoom,
         "theme" if !rest.is_empty() => Action::Theme(rest.into()),
@@ -301,6 +306,7 @@ impl Config {
             "welcome" => self.panel_files.push(val.into()),
             "kb_layout" => self.kb_layout = val.into(),
             "kb_options" => self.kb_options = val.into(),
+            "engine" => self.engine = val.to_string(),
             "focus_follows_mouse" => self.focus_follows_mouse = matches!(val, "on" | "true" | "yes" | "1"),
             "widgets" => self.widgets = matches!(val, "on" | "true" | "yes" | "1"),
             "enter" => self.enter = val.into(),
@@ -385,6 +391,14 @@ impl Config {
 }
 
 /// `$XDG_CONFIG_HOME/finedesktop` (or `$FD_CONFIG_DIR`): config, themes/, hooks/, widgets/, mode/, autostart/.
+/// Where the engine library is looked for: `engine = PATH`, else ~/.local/lib/finedesktop/libfinedesktop_engine.so.
+pub fn engine_path(c: &Config) -> Option<std::path::PathBuf> {
+    if !c.engine.is_empty() {
+        return Some(std::path::PathBuf::from(c.engine.replacen('~', &std::env::var("HOME").unwrap_or_default(), 1)));
+    }
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/lib/finedesktop/libfinedesktop_engine.so"))
+}
+
 pub fn config_dir() -> Option<std::path::PathBuf> {
     if let Some(d) = std::env::var_os("FD_CONFIG_DIR") {
         return Some(d.into());
@@ -417,6 +431,15 @@ fn parse_color(s: &str) -> Result<[f32; 4], String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_bar_has_workspaces_right_and_status_left() {
+        let mut c = Config::default();
+        assert!(c.apply(DEFAULT).is_empty());
+        assert_eq!(c.bar_right, vec!["tags"]);
+        assert_eq!(c.bar_left.first().map(String::as_str), Some("spk"));
+        assert!(c.bar_left.contains(&"time".to_string()));
+    }
+
     use super::*;
 
     fn default_cfg() -> Config {

@@ -1,6 +1,6 @@
 use std::{ffi::OsString, sync::Arc};
 
-use crate::components::engine::layout_engine::{Bar, Layout, Params, Rect, arrange};
+use crate::components::engine::layout_engine::{Bar, Layout, Params, Rect};
 use crate::config::{Action, Config, Dir, LayoutSel, WsSel};
 use smithay::output::Output;
 
@@ -76,6 +76,7 @@ pub struct Desktop {
     /// active mode and the config it replaced (restored on `mode off`)
     pub mode: Option<(String, Box<Config>, String)>,
     pub widgets: crate::components::widgets::Widgets,
+    pub engine: crate::engine_host::EngineHost,
     /// something the bar shows changed; redraw on the next frame
     pub bar_dirty: bool,
     /// windows already announced: id -> (app_id, title)
@@ -168,6 +169,7 @@ impl Desktop {
             subs: Vec::new(),
             mode: None,
             widgets: crate::components::widgets::Widgets::start(),
+            engine: Default::default(),
             bar_dirty: true,
             known: Default::default(),
             last_focus: None,
@@ -368,7 +370,7 @@ impl Desktop {
                 self.space.unmap_elem(&w);
             }
             let ws = &self.mons[mi].ws[cur];
-            let plan = arrange(ws.layout, area, ws.clients.len(), ws.focus, &ws.params);
+            let plan = self.engine.arrange(ws.layout, area, ws.clients.len(), ws.focus, &ws.params);
             let clients = ws.clients.clone();
             let focus = ws.focus;
             self.mons[mi].bar = plan.bar;
@@ -490,7 +492,7 @@ impl Desktop {
     }
 
     pub fn focus_dir(&mut self, d: crate::components::engine::focus_engine::Cardinal) {
-        use crate::components::engine::focus_engine::{Cardinal, monitor_towards, neighbor};
+        use crate::components::engine::focus_engine::Cardinal;
         let mi = self.focus_mon.min(self.mons.len().saturating_sub(1));
         if self.mons.is_empty() {
             return;
@@ -504,19 +506,29 @@ impl Desktop {
             self.refocus();
             return;
         }
-        if let Some(i) = neighbor(&rects, f, d) {
+        if let Some(i) = self.engine.neighbor(&rects, f, d) {
             self.focus_loc((mi, cur, i));
             return;
         }
         // nothing that way on this monitor: go to the monitor beyond, onto its focused window
-        if let Some(to) = monitor_towards(&self.mon_rects(), mi, d) {
+        if let Some(to) = self.engine.monitor_towards(&self.mon_rects(), mi, d) {
             self.focus_mon = to;
             self.refocus();
         }
     }
 
+    /// Load (or reload) the engine library and lay the windows out again with it.
+    pub fn reload_engine(&mut self) -> Result<String, String> {
+        let path = crate::config::engine_path(&self.config).ok_or("no engine path")?;
+        let msg = self.engine.reload(&path)?;
+        tracing::info!("{msg}");
+        self.retile();
+        self.bar_dirty = true;
+        Ok(msg)
+    }
+
     pub fn move_dir(&mut self, d: crate::components::engine::focus_engine::Cardinal) {
-        use crate::components::engine::focus_engine::{Cardinal, monitor_towards, neighbor};
+        use crate::components::engine::focus_engine::Cardinal;
         if self.mons.is_empty() {
             return;
         }
@@ -548,12 +560,12 @@ impl Desktop {
             self.refocus();
             return;
         }
-        if let Some(i) = neighbor(&rects, f, d) {
+        if let Some(i) = self.engine.neighbor(&rects, f, d) {
             let ws = &mut self.mons[mi].ws[cur];
             ws.clients.swap(f, i);
             ws.focus = i;
             self.refocus();
-        } else if let Some(to) = monitor_towards(&self.mon_rects(), mi, d) {
+        } else if let Some(to) = self.engine.monitor_towards(&self.mon_rects(), mi, d) {
             let w = self.mons[mi].ws[cur].clients.remove(f);
             let ws = &mut self.mons[mi].ws[cur];
             ws.focus = f.min(ws.clients.len().saturating_sub(1));
@@ -731,6 +743,18 @@ impl Desktop {
             }
             Action::Reload => {
                 self.load_config();
+                // an engine library that is there (and newer, or not loaded yet) is picked up too
+                if crate::config::engine_path(&self.config).is_some_and(|p| p.is_file()) {
+                    if let Err(e) = self.reload_engine() {
+                        tracing::warn!("engine: {e}");
+                    }
+                }
+            }
+            Action::ReloadEngine => {
+                return match self.reload_engine() {
+                    Ok(m) => m,
+                    Err(e) => format!("error: {e}"),
+                };
             }
             Action::State => return self.report(),
             Action::Theme(name) => return self.set_theme(&name),

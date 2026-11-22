@@ -860,11 +860,16 @@ name = "finedesktop"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "finedesktop-engine",
  "libc",
  "smithay",
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "finedesktop-engine"
+version = "0.1.0"
 
 [[package]]
 name = "flate2"

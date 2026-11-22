@@ -1,5 +1,6 @@
 #![allow(irrefutable_let_patterns)]
 
+mod engine_host;
 mod handlers;
 
 mod grabs;
@@ -54,6 +55,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
     }
     state.widgets.configure(&state.config);
+    if config::engine_path(&state.config).is_some_and(|p| p.is_file()) {
+        if let Err(e) = state.reload_engine() {
+            tracing::warn!("engine: {e}");
+        }
+    }
     state.emit(components::hooks::Event::start());
     for cmd in state.config.exec.clone() {
         keys::spawn(&cmd);

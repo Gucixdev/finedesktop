@@ -13,6 +13,7 @@
 //! later, draws `Plan::bar`. New layouts = one new `Layout` variant + one `match` arm.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,

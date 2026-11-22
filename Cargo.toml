@@ -10,6 +10,7 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 bitflags = "2.2.1"
 tracing = "0.1"
 libc = "0.2.191"
+finedesktop-engine = { path = "engine" }
 
 # vendored on purpose: the whole stack stays readable and patchable
 [dependencies.smithay]
@@ -18,3 +19,4 @@ default-features = false
 features = ["backend_winit", "wayland_frontend", "desktop", "backend_drm", "backend_gbm", "backend_libinput", "backend_udev", "backend_session_libseat", "renderer_gl"]
 
 [workspace]
+members = ["engine"]

@@ -1,0 +1,10 @@
+[package]
+name = "finedesktop-engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pure-geometry engines of finedesktop (layouts, directional focus), also built as a shared library the compositor can reload"
+
+# rlib: linked into the compositor as the fallback; cdylib: libfinedesktop_engine.so, swapped in at run time (`ctl reload-engine`)
+[lib]
+crate-type = ["rlib", "cdylib"]

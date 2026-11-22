@@ -1,0 +1,13 @@
+#!/bin/sh
+# hot - rebuild the engines (layouts, directional focus) and swap them into the running compositor, windows stay open.
+# Changes outside engine/ (protocols, backends, input) need a restart of the session; a changed ABI says so.
+set -eu
+cd "$(dirname "$(readlink -f "$0")")"
+cargo build --release -p finedesktop-engine 2>&1 | tail -1
+dir=${XDG_DATA_HOME:-$HOME/.local}/lib/finedesktop
+mkdir -p "$dir"
+install -m755 target/release/libfinedesktop_engine.so "$dir/libfinedesktop_engine.so.new"
+mv "$dir/libfinedesktop_engine.so.new" "$dir/libfinedesktop_engine.so"
+sock=$(ls -t "${XDG_RUNTIME_DIR:-/tmp}"/finedesktop-*.sock 2>/dev/null | head -1)
+[ -n "$sock" ] || { echo "hot: installed, no running finedesktop to reload"; exit 0; }
+FD_SOCK=$sock finedesktop ctl reload-engine

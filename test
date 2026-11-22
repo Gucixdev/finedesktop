@@ -5,6 +5,7 @@ set -u
 cd "$(dirname "$0")"
 cargo test -q 2>&1 | tail -3 || exit 1
 cargo build -q 2>&1 | grep -E '^error' && exit 1
+cargo build -q --release -p finedesktop-engine 2>&1 | grep -E '^error' && exit 1
 
 bin=$PWD/target/debug/finedesktop
 log=$(mktemp -d)
@@ -13,7 +14,8 @@ ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1"; fail=1; }
 
 # own config dir: never the user's autostart, and the real pointer must not move focus
-mkdir -p "$log/cfg"; printf 'focus_follows_mouse = off\n' > "$log/cfg/config"
+mkdir -p "$log/cfg"; cp target/release/libfinedesktop_engine.so "$log/engine.so"
+printf 'focus_follows_mouse = off\nengine = %s\n' "$log/engine.so" > "$log/cfg/config"
 touch "$log/start"; sleep 0.05
 FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" "$bin" >"$log/c.log" 2>&1 &
 cpid=$!
@@ -103,6 +105,16 @@ ctl state | grep -q '^  ws3 #0' && ok "tag 3 moved focused window" || bad "tag 3
 ctl focus next >/dev/null; ctl close >/dev/null
 for _ in $(seq 30); do [ "$(ctl state | grep -c '^  ws')" = 3 ] && break; sleep 0.1; done
 [ "$(ctl state | grep -c '^  ws')" = 3 ] && ok "close removed a client" || bad "close"
+
+# hot reload of the engines: windows stay where they are, a broken library is refused and the old one keeps working
+ctl layout tile >/dev/null; sleep 0.3
+before=$(ctl state | grep -c '^  ws')
+ctl reload-engine 2>&1 | grep -q 'engine loaded' && ok "reload-engine loads the library" || bad "reload-engine"
+[ "$(ctl state | grep -c '^  ws')" = "$before" ] && ok "reload-engine keeps the windows" || bad "reload-engine lost windows"
+cp "$log/engine.so" "$log/engine.good"; echo junk > "$log/engine.so"
+ctl reload-engine 2>&1 | grep -q '^error' && ok "broken engine library refused" || bad "broken engine accepted"
+ctl layout grid 2>&1 | grep -q '^ok' && ok "layouts still work after a refused reload" || bad "layout after refused reload"
+ctl layout tile >/dev/null; cp "$log/engine.good" "$log/engine.so"
 
 ctl bogus >/dev/null 2>&1 && bad "bogus action accepted" || ok "bogus action rejected"
 ctl layout nope 2>&1 | grep -q '^error' && ok "bad layout rejected" || bad "bad layout accepted"
