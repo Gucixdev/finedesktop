@@ -34,3 +34,19 @@ Works nested (winit backend): tiling verified with two real foot clients.
 Not done yet: DRM/libinput backend (real session), drawing the tab/stack bar, tags/workspaces,
 layer-shell (bar, menu), per-output layouts, config file, hooks.
 Key actions are wired but only the layout math is covered by tests (`cargo test`).
+
+## Using it
+
+```
+./target/release/finedesktop          # on a tty: DRM + libinput via seatd; inside another compositor: a window
+finedesktop ctl theme list|NAME       # look: dwl zen matrix catpuccino dracula steam official-dark official-light
+finedesktop ctl mode list|NAME|off    # behaviour: gamemode ecomode afkmode (nightmode/daymode also change the theme, optional)
+finedesktop ctl bar toggle|top|bottom|off
+finedesktop ctl emit NAME TEXT        # a user event for hooks and subscribers
+finedesktop ctl subscribe             # one line per event: start open close focus title tag layout output theme mode reload user minute
+```
+
+Config dir: `$FD_CONFIG_DIR` or `~/.config/finedesktop/`: `config`, `themes/NAME`, `mode/NAME`, `hooks/on-<event>` (executable,
+started in the background with `FD_*` variables), `widgets/NAME` (executable, shown in the bar when its name is in
+`bar_left` / `bar_right`), `segment = NAME SECONDS COMMAND` in the config. Examples are in `examples/`.
+A theme is a separate setting from a mode: a theme is how it looks, a mode is how the system behaves.

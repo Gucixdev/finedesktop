@@ -1,0 +1,5 @@
+#!/bin/sh
+# every 600
+# a widget is any executable: first line of output is shown in the bar when its name is in bar_right.
+# a leading #rrggbb colours it. Add "weather" to bar_right in your config.
+curl -fsS --max-time 3 'wttr.in/?format=%t' 2>/dev/null || echo "#928374 n/a"

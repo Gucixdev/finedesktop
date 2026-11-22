@@ -1,0 +1,5 @@
+#!/bin/sh
+# runs for every new window: FD_WINDOW FD_APPID FD_TITLE FD_OUTPUT FD_WORKSPACE
+case "$FD_APPID" in
+  steam) finedesktop ctl layout float ;;
+esac
