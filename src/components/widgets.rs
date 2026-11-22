@@ -15,7 +15,13 @@ use std::{
 
 use crate::config::Config;
 
-pub const BUILTIN: [&str; 13] = ["tags", "layout", "|", "spk", "vol", "mic", "cpu", "gpu", "ram", "vram", "bat", "date", "clock"];
+pub const BUILTIN: [&str; 19] = [
+    "tags", "layout", "|", "spk", "vol", "mic", "cpu", "gpu", "ram", "vram", "bat", "date", "clock", "disk", "disk-bar", "cpu-graph", "ram-graph", "gpu-graph",
+    "vram-graph",
+];
+
+/// Samples kept for the mini graphs (one per `bar_interval`, so 30 s by default).
+pub const HIST: usize = 30;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
@@ -33,6 +39,11 @@ pub struct Shared {
     pub mic: Option<(u32, bool)>,
     /// (gpu busy %, vram used %)
     pub gpu: Option<(u32, u32)>,
+    /// (total, free) bytes of the `disk =` path
+    pub disk: Option<(u64, u64)>,
+    disk_path: String,
+    /// last `HIST` samples (0-100) per graph: cpu ram gpu vram
+    pub hist: HashMap<&'static str, Vec<u8>>,
     pub text: HashMap<String, String>,
     jobs: Vec<Job>,
     enabled: bool,
@@ -53,6 +64,38 @@ fn first_line(cmd: &str) -> String {
         Ok(o) => String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().chars().take(100).collect(),
         Err(_) => String::new(),
     }
+}
+
+/// Append a sample, keep the last `HIST`.
+pub fn push_hist(h: &mut Vec<u8>, v: u32) {
+    h.push(v.min(100) as u8);
+    if h.len() > HIST {
+        h.remove(0);
+    }
+}
+
+/// (total, free-to-users) bytes of the filesystem holding `path`.
+pub fn read_disk(path: &str) -> Option<(u64, u64)> {
+    let c = std::ffi::CString::new(path).ok()?;
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    let fr = s.f_frsize as u64;
+    let total = s.f_blocks as u64 * fr;
+    (total > 0).then(|| (total, s.f_bavail as u64 * fr))
+}
+
+/// 455G, 1.2T, 850M (1024-based like `df -h`): short enough for a bar.
+pub fn human(b: u64) -> String {
+    const U: [(&str, f64); 4] = [("T", 1099511627776.0), ("G", 1073741824.0), ("M", 1048576.0), ("K", 1024.0)];
+    for (n, d) in U {
+        let v = b as f64 / d;
+        if v >= 1.0 {
+            return if v < 10.0 { format!("{v:.1}{n}") } else { format!("{:.0}{n}", v) };
+        }
+    }
+    format!("{b}B")
 }
 
 fn read_cpu() -> Option<(u64, u64)> {
@@ -144,7 +187,7 @@ impl Widgets {
         let sh = shared.clone();
         std::thread::spawn(move || {
             let long_ago = Instant::now() - Duration::from_secs(99);
-            let (mut prev, mut last_stats, mut last_vol, mut last_gpu) = (read_cpu(), long_ago, long_ago, long_ago);
+            let (mut prev, mut last_stats, mut last_vol, mut last_gpu, mut last_disk) = (read_cpu(), long_ago, long_ago, long_ago, long_ago);
             let mut last_run: HashMap<String, Instant> = HashMap::new();
             loop {
                 std::thread::sleep(Duration::from_millis(500));
@@ -165,6 +208,8 @@ impl Widgets {
                     g.cpu = cpu;
                     g.ram = ram;
                     g.bat = bat;
+                    push_hist(g.hist.entry("cpu").or_default(), cpu);
+                    push_hist(g.hist.entry("ram").or_default(), ram);
                 }
                 if last_vol.elapsed() >= Duration::from_secs(interval) {
                     last_vol = Instant::now();
@@ -176,7 +221,18 @@ impl Widgets {
                 if last_gpu.elapsed() >= Duration::from_secs(3.max(interval)) {
                     last_gpu = Instant::now();
                     let g = read_gpu();
-                    sh.lock().unwrap().gpu = g;
+                    let mut sg = sh.lock().unwrap();
+                    if let Some((gp, vr)) = g {
+                        push_hist(sg.hist.entry("gpu").or_default(), gp);
+                        push_hist(sg.hist.entry("vram").or_default(), vr);
+                    }
+                    sg.gpu = g;
+                }
+                if last_disk.elapsed() >= Duration::from_secs(10) {
+                    last_disk = Instant::now();
+                    let path = sh.lock().unwrap().disk_path.clone();
+                    let d = read_disk(if path.is_empty() { "/" } else { &path });
+                    sh.lock().unwrap().disk = d;
                 }
                 if enabled {
                     for j in jobs {
@@ -217,6 +273,10 @@ impl Widgets {
         g.jobs = jobs;
         g.enabled = cfg.widgets;
         g.interval = cfg.bar_interval;
+        if g.disk_path != cfg.disk {
+            g.disk_path = cfg.disk.clone();
+            g.disk = read_disk(&cfg.disk);
+        }
     }
 }
 
@@ -267,5 +327,36 @@ mod tests {
     #[test]
     fn script_output_first_line() {
         assert_eq!(first_line("printf 'a\\nb\\n'"), "a");
+    }
+}
+
+#[cfg(test)]
+mod disk_tests {
+    use super::*;
+
+    #[test]
+    fn human_sizes_are_short() {
+        assert_eq!(human(455 << 30), "455G");
+        assert_eq!(human(1_320_000_000_000), "1.2T");
+        assert_eq!(human(850 << 20), "850M");
+        assert_eq!(human(12), "12B");
+    }
+
+    #[test]
+    fn history_keeps_the_last_samples() {
+        let mut h = vec![];
+        for i in 0..(HIST as u32 + 5) {
+            push_hist(&mut h, i * 10);
+        }
+        assert_eq!(h.len(), HIST);
+        assert_eq!(*h.last().unwrap(), 100); // clamped
+        assert_eq!(h[0], ((5 * 10).min(100)) as u8);
+    }
+
+    #[test]
+    fn root_has_a_size() {
+        let (total, free) = read_disk("/").unwrap();
+        assert!(total > 0 && free <= total);
+        assert!(read_disk("/no/such/dir/here").is_none());
     }
 }

@@ -39,15 +39,64 @@ smithay::backend::renderer::element::render_elements! {
     Solid = SolidColorRenderElement,
 }
 
+/// A picture after an item's text: a history graph (last samples, 0-100) or a fill bar (0-100).
+#[derive(Debug, Clone, Hash, PartialEq)]
+enum Gfx {
+    None,
+    Graph(Vec<u8>),
+    Fill(u8),
+}
+
 #[derive(Debug, Clone, Hash)]
 struct Item {
     text: String,
     fg: Rgb,
     bg: Option<Rgb>,
+    gfx: Gfx,
 }
 
 fn it(text: impl Into<String>, fg: Rgb) -> Item {
-    Item { text: text.into(), fg, bg: None }
+    Item { text: text.into(), fg, bg: None, gfx: Gfx::None }
+}
+
+fn with_gfx(text: &str, fg: Rgb, gfx: Gfx) -> Item {
+    Item { text: text.into(), fg, bg: None, gfx }
+}
+
+/// Width of the picture part, in pixels.
+fn gfx_w(g: &Gfx, cw: i32, scale: i32) -> i32 {
+    match g {
+        Gfx::None => 0,
+        Gfx::Graph(_) => widgets::HIST as i32 * 2 * scale,
+        Gfx::Fill(_) => 8 * cw,
+    }
+}
+
+/// Text plus gap plus picture.
+fn item_w(i: &Item, cw: i32, scale: i32) -> i32 {
+    let text = i.text.chars().count() as i32 * cw;
+    let g = gfx_w(&i.gfx, cw, scale);
+    if g == 0 { text } else { text + if text > 0 { cw / 2 } else { 0 } + g }
+}
+
+/// The picture of `i` with its left edge at `x`, spanning bar height `bh`.
+fn draw_gfx(cv: &mut Canvas, i: &Item, x: i32, bh: i32, cw: i32, scale: i32, t: &super::theme::Theme) {
+    let (gy, gh) = (3 * scale, bh - 6 * scale);
+    let gw = gfx_w(&i.gfx, cw, scale);
+    cv.rect(x, gy, gw, gh, t.border_normal);
+    let hot = |v: u8| if v >= 90 { t.urgent } else { i.fg };
+    match &i.gfx {
+        Gfx::None => {}
+        Gfx::Graph(h) => {
+            let col = 2 * scale;
+            let first = widgets::HIST - h.len().min(widgets::HIST);
+            for (k, &v) in h.iter().enumerate() {
+                let bar = (v as i32 * gh / 100).max(if v > 0 { 1 } else { 0 });
+                cv.rect(x + (first + k) as i32 * col, gy + gh - bar, col, bar, hot(v));
+            }
+        }
+        Gfx::Fill(v) => cv.rect(x, gy, (*v as i32).min(100) * gw / 100, gh, hot(*v)),
+    }
 }
 
 fn hash_of<T: Hash>(t: &T) -> u64 {
@@ -68,7 +117,7 @@ impl Desktop {
                 for (i, ws) in m.ws.iter().enumerate() {
                     // the open workspace is shown as >n<, the others as " n "
                     if i == m.cur {
-                        out.push(Item { text: format!(">{}<", i + 1), fg: t.sel_fg, bg: Some(t.sel_bg) });
+                        out.push(Item { text: format!(">{}<", i + 1), fg: t.sel_fg, bg: Some(t.sel_bg), gfx: Gfx::None });
                     } else if !ws.clients.is_empty() {
                         out.push(it(format!(" {} ", i + 1), t.fg));
                     } else {
@@ -79,6 +128,30 @@ impl Desktop {
             "layout" => out.push(it(format!("[{}]", m.ws[m.cur].layout.name()), t.accent)),
             "cpu" => out.push(it(format!("cpu {}%", sh.cpu), t.fg)),
             "ram" => out.push(it(format!("ram {}%", sh.ram), t.fg)),
+            "cpu-graph" | "ram-graph" | "gpu-graph" | "vram-graph" => {
+                let key = name.trim_end_matches("-graph");
+                if let Some(h) = sh.hist.get(key).filter(|h| !h.is_empty()) {
+                    out.push(with_gfx(key, t.dim, Gfx::Graph(h.clone())));
+                    // the graph takes the accent colour, the label stays dim
+                    if let Some(last) = out.last_mut() {
+                        last.fg = t.accent;
+                    }
+                }
+            }
+            "disk" => {
+                if let Some((_, free)) = sh.disk {
+                    out.push(it(format!("disk {} free", widgets::human(free)), t.fg));
+                }
+            }
+            "disk-bar" => {
+                if let Some((total, free)) = sh.disk {
+                    let used = (total - free.min(total)) * 100 / total;
+                    out.push(with_gfx("disk", t.fg, Gfx::Fill(used as u8)));
+                    if let Some(last) = out.last_mut() {
+                        last.fg = t.accent;
+                    }
+                }
+            }
             "|" => out.push(it("|", t.dim)),
             "spk" | "vol" | "mic" => {
                 let (name, v) = if name == "mic" { ("mic", sh.mic) } else { ("spk", sh.vol) };
@@ -226,23 +299,33 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             let cw = 8 * scale;
             let mut x = 0;
             for i in &left {
-                let tw = i.text.chars().count() as i32 * cw;
+                let tw = item_w(i, cw, scale);
                 let slot = tw + if i.bg.is_some() { 0 } else { pad };
                 if let Some(bg) = i.bg {
                     cv.rect(x, 0, slot, bh, bg);
                 }
-                cv.text(x + if i.bg.is_some() { 0 } else { pad / 2 }, ty, &i.text, i.fg, scale, w);
+                let tx = x + if i.bg.is_some() { 0 } else { pad / 2 };
+                cv.text(tx, ty, &i.text, if i.gfx == Gfx::None { i.fg } else { t.dim }, scale, w);
+                if i.gfx != Gfx::None {
+                    let gx = tx + i.text.chars().count() as i32 * cw + if i.text.is_empty() { 0 } else { cw / 2 };
+                    draw_gfx(cv, i, gx, bh, cw, scale, &t);
+                }
                 x += slot;
             }
             let mut rx = w;
             for i in right.iter().rev() {
-                let tw = i.text.chars().count() as i32 * cw;
+                let tw = item_w(i, cw, scale);
                 let slot = tw + if i.bg.is_some() { 0 } else { pad * 2 };
                 rx -= slot;
                 if let Some(bg) = i.bg {
                     cv.rect(rx, 0, slot, bh, bg);
                 }
-                cv.text(rx + if i.bg.is_some() { 0 } else { pad }, ty, &i.text, i.fg, scale, w);
+                let tx = rx + if i.bg.is_some() { 0 } else { pad };
+                cv.text(tx, ty, &i.text, if i.gfx == Gfx::None { i.fg } else { t.dim }, scale, w);
+                if i.gfx != Gfx::None {
+                    let gx = tx + i.text.chars().count() as i32 * cw + if i.text.is_empty() { 0 } else { cw / 2 };
+                    draw_gfx(cv, i, gx, bh, cw, scale, &t);
+                }
             }
             cv.rect(0, if pos == BarPos::Top { bh - 1 } else { 0 }, w, 1, t.border_normal);
         });

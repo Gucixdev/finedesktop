@@ -49,6 +49,7 @@ finedesktop ctl subscribe             # one line per event: start open close foc
 Config dir: `$FD_CONFIG_DIR` or `~/.config/finedesktop/`: `config`, `themes/NAME`, `mode/NAME`, `hooks/on-<event>` (executable,
 started in the background with `FD_*` variables), `widgets/NAME` (executable, shown in the bar when its name is in
 `bar_left` / `bar_right`), `segment = NAME SECONDS COMMAND` in the config. Examples are in `examples/`.
+Built-in bar items: `cpu gpu ram vram` (numbers), `cpu-graph gpu-graph ram-graph vram-graph` (last 30 samples as a mini graph, red above 90%), `disk` (free space) and `disk-bar` (used, as a bar) of the filesystem named by `disk = PATH`.
 A theme is a separate setting from a mode: a theme is how it looks, a mode is how the system behaves.
 
 ## Menu and logs

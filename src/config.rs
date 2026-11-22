@@ -133,6 +133,8 @@ pub struct Config {
     pub rules: Vec<crate::components::window::Rule>,
     /// warn at this battery percentage (0 = off)
     pub low_battery: i32,
+    /// filesystem the `disk` / `disk-bar` bar items show (any path on it)
+    pub disk: String,
     /// actions refused when they come over `ctl`
     pub ctl_deny: Vec<String>,
     /// preferred browser, editor, files (the terminal is `terminal`): see settings_preferaps
@@ -183,6 +185,7 @@ impl Default for Config {
             ctl_deny: Vec::new(),
             rules: Vec::new(),
             low_battery: 15,
+            disk: "/".into(),
             prefer: crate::components::settings::settings_preferaps::defaults(),
             menu: "dmenu_run".into(),
             gap: 0,
@@ -353,6 +356,7 @@ impl Config {
             "terminal" => self.terminal = val.into(),
             "lock" => self.lock = val.into(),
             "rule" => self.rules.push(crate::components::window::Rule::parse(val).ok_or_else(|| format!("rule: APP [ws=N] [name=TEXT], got {val:?}"))?),
+            "disk" => self.disk = expand_home(val),
             "low_battery" => self.low_battery = n(val)?.clamp(0, 100),
             "ctl_deny" => self.ctl_deny = val.split_whitespace().map(String::from).collect(),
             "menu" => self.menu = expand_home(val),
