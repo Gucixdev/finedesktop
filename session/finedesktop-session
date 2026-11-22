@@ -1,0 +1,9 @@
+#!/bin/sh
+# SDDM session entry for finedesktop (DRM backend, logind provides the seat). Log: ~/.cache/finedesktop.log
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=finedesktop MOZ_ENABLE_WAYLAND=1 FD_BACKEND=drm
+export XDG_DATA_DIRS=/data/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
+export FLATPAK_USER_DIR=/data/flatpak
+mkdir -p "$HOME/.cache"
+bin=$HOME/.local/bin/finedesktop
+[ -x "$bin" ] || bin=$(command -v finedesktop) || { echo "finedesktop not installed" >&2; exit 1; }
+exec "$bin" >"$HOME/.cache/finedesktop.log" 2>&1

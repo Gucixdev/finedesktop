@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=finedesktop
+Comment=Rust Wayland compositor (smithay), keyboard-first
+Exec=/home/drbongo/.local/bin/finedesktop-session
+Type=Application
+DesktopNames=finedesktop
