@@ -15,7 +15,7 @@ use std::{
 
 use crate::config::Config;
 
-pub const BUILTIN: [&str; 10] = ["tags", "layout", "title", "windows", "cpu", "ram", "vol", "bat", "date", "clock"];
+pub const BUILTIN: [&str; 12] = ["tags", "layout", "|", "vol", "mic", "cpu", "gpu", "ram", "vram", "bat", "date", "clock"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
@@ -30,6 +30,9 @@ pub struct Shared {
     pub ram: u32,
     pub bat: Option<(u32, bool)>,
     pub vol: Option<(u32, bool)>,
+    pub mic: Option<(u32, bool)>,
+    /// (gpu busy %, vram used %)
+    pub gpu: Option<(u32, u32)>,
     pub text: HashMap<String, String>,
     jobs: Vec<Job>,
     enabled: bool,
@@ -88,9 +91,41 @@ pub fn parse_vol(s: &str) -> Option<(u32, bool)> {
     Some(((v * 100.0).round() as u32, s.contains("MUTED")))
 }
 
-fn read_vol() -> Option<(u32, bool)> {
-    let o = Command::new("timeout").args(["1", "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]).stderr(Stdio::null()).output().ok()?;
+fn read_vol(target: &str) -> Option<(u32, bool)> {
+    let o = Command::new("timeout").args(["1", "wpctl", "get-volume", target]).stderr(Stdio::null()).output().ok()?;
     parse_vol(&String::from_utf8_lossy(&o.stdout))
+}
+
+/// "35, 1204, 4096" -> (35, 29): nvidia-smi `utilization.gpu, memory.used, memory.total`.
+pub fn parse_nvidia(s: &str) -> Option<(u32, u32)> {
+    let v: Vec<u64> = s.lines().next()?.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    if v.len() < 3 || v[2] == 0 {
+        return None;
+    }
+    Some((v[0].min(100) as u32, (v[1] * 100 / v[2]).min(100) as u32))
+}
+
+/// GPU load and VRAM use: nvidia-smi when there is one, else the amdgpu sysfs files.
+fn read_gpu() -> Option<(u32, u32)> {
+    if let Ok(o) = Command::new("timeout")
+        .args(["2", "nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"])
+        .stderr(Stdio::null())
+        .output()
+    {
+        if let Some(r) = parse_nvidia(&String::from_utf8_lossy(&o.stdout)) {
+            return Some(r);
+        }
+    }
+    for e in std::fs::read_dir("/sys/class/drm").ok()?.flatten() {
+        let d = e.path().join("device");
+        let num = |f: &str| std::fs::read_to_string(d.join(f)).ok()?.trim().parse::<u64>().ok();
+        if let (Some(busy), Some(used), Some(total)) = (num("gpu_busy_percent"), num("mem_info_vram_used"), num("mem_info_vram_total")) {
+            if total > 0 {
+                return Some((busy.min(100) as u32, (used * 100 / total).min(100) as u32));
+            }
+        }
+    }
+    None
 }
 
 impl Widgets {
@@ -98,7 +133,8 @@ impl Widgets {
         let shared = Arc::new(Mutex::new(Shared { enabled: true, interval: 1, ..Shared::default() }));
         let sh = shared.clone();
         std::thread::spawn(move || {
-            let (mut prev, mut last_stats, mut last_vol) = (read_cpu(), Instant::now() - Duration::from_secs(99), Instant::now() - Duration::from_secs(99));
+            let long_ago = Instant::now() - Duration::from_secs(99);
+            let (mut prev, mut last_stats, mut last_vol, mut last_gpu) = (read_cpu(), long_ago, long_ago, long_ago);
             let mut last_run: HashMap<String, Instant> = HashMap::new();
             loop {
                 std::thread::sleep(Duration::from_millis(500));
@@ -120,10 +156,17 @@ impl Widgets {
                     g.ram = ram;
                     g.bat = bat;
                 }
-                if last_vol.elapsed() >= Duration::from_secs(5.max(interval)) {
+                if last_vol.elapsed() >= Duration::from_secs(interval) {
                     last_vol = Instant::now();
-                    let v = read_vol();
-                    sh.lock().unwrap().vol = v;
+                    let (v, m) = (read_vol("@DEFAULT_AUDIO_SINK@"), read_vol("@DEFAULT_AUDIO_SOURCE@"));
+                    let mut g = sh.lock().unwrap();
+                    g.vol = v;
+                    g.mic = m;
+                }
+                if last_gpu.elapsed() >= Duration::from_secs(3.max(interval)) {
+                    last_gpu = Instant::now();
+                    let g = read_gpu();
+                    sh.lock().unwrap().gpu = g;
                 }
                 if enabled {
                     for j in jobs {
@@ -190,6 +233,13 @@ mod tests {
         assert_eq!(parse_vol("Volume: 0.50"), Some((50, false)));
         assert_eq!(parse_vol("Volume: 1.00 [MUTED]"), Some((100, true)));
         assert_eq!(parse_vol("nonsense"), None);
+    }
+
+    #[test]
+    fn nvidia_line() {
+        assert_eq!(parse_nvidia("35, 1024, 4096\n"), Some((35, 25)));
+        assert_eq!(parse_nvidia("garbage"), None);
+        assert_eq!(parse_nvidia("1, 2, 0"), None);
     }
 
     #[test]

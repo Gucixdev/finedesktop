@@ -40,6 +40,12 @@ pub enum Action {
     Quit,
     Reload,
     Focus(Dir),
+    /// `focus left|right|up|down`: the window in that direction, or the monitor beyond it
+    FocusDir(crate::components::engine::focus_engine::Cardinal),
+    /// `move left|right|up|down`: swap with the window in that direction, or send to the monitor beyond it
+    MoveDir(crate::components::engine::focus_engine::Cardinal),
+    /// `focus last`: the window focused before this one
+    FocusLast,
     Zoom,
     Layout(LayoutSel),
     Mfact(f32),
@@ -109,6 +115,8 @@ pub struct Config {
     pub font_scale: i32,
     /// background widget scripts (`segment`s and widgets/ files) run; modes switch this off
     pub widgets: bool,
+    /// the window under the pointer takes keyboard focus when the pointer moves onto it
+    pub focus_follows_mouse: bool,
     /// xkb layout list and options, e.g. `kb_layout = pl,gb` and `kb_options = grp:shifts_toggle`
     pub kb_layout: String,
     pub kb_options: String,
@@ -143,6 +151,7 @@ impl Default for Config {
             bar_interval: 1,
             font_scale: 1,
             widgets: true,
+            focus_follows_mouse: true,
             kb_layout: String::new(),
             kb_options: String::new(),
             enter: String::new(),
@@ -193,8 +202,15 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "mode" if !rest.is_empty() => Action::Mode(rest.into()),
         "emit" if !rest.is_empty() => Action::Emit(rest.into()),
         "bar" if !rest.is_empty() => Action::Bar(rest.into()),
-        "panel" => Action::Panel(if rest.is_empty() { "toggle".into() } else { rest.into() }),
-        "focus" => Action::Focus(parse_dir(rest)?),
+        "welcome" | "panel" => Action::Panel(if rest.is_empty() { "toggle".into() } else { rest.into() }),
+        "focus" => match crate::components::engine::focus_engine::Cardinal::parse(rest) {
+            Some(c) => Action::FocusDir(c),
+            None if rest == "last" => Action::FocusLast,
+            None => Action::Focus(parse_dir(rest)?),
+        },
+        "move" => Action::MoveDir(
+            crate::components::engine::focus_engine::Cardinal::parse(rest).ok_or("move left|right|up|down")?,
+        ),
         "layout" => match rest {
             "next" | "prev" => Action::Layout(LayoutSel::Dir(parse_dir(rest)?)),
             name => Action::Layout(LayoutSel::Set(
@@ -280,11 +296,12 @@ impl Config {
             "bar_right" => self.bar_right = val.split_whitespace().map(String::from).collect(),
             "bar_interval" => self.bar_interval = n(val)?.clamp(1, 3600) as u64,
             "font_scale" => self.font_scale = n(val)?.clamp(1, 4),
-            "panels" => self.panels = matches!(val, "on" | "true" | "yes" | "1"),
-            "panel_keys" => self.panel_keys = matches!(val, "on" | "true" | "yes" | "1"),
-            "panel" => self.panel_files.push(val.into()),
+            "welcome_auto" => self.panels = matches!(val, "on" | "true" | "yes" | "1"),
+            "welcome_keys" => self.panel_keys = matches!(val, "on" | "true" | "yes" | "1"),
+            "welcome" => self.panel_files.push(val.into()),
             "kb_layout" => self.kb_layout = val.into(),
             "kb_options" => self.kb_options = val.into(),
+            "focus_follows_mouse" => self.focus_follows_mouse = matches!(val, "on" | "true" | "yes" | "1"),
             "widgets" => self.widgets = matches!(val, "on" | "true" | "yes" | "1"),
             "enter" => self.enter = val.into(),
             "leave" => self.leave = val.into(),

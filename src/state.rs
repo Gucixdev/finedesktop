@@ -78,8 +78,11 @@ pub struct Desktop {
     /// windows already announced: id -> (app_id, title)
     pub known: std::collections::HashMap<u32, (String, String)>,
     pub last_focus: Option<u32>,
+    /// the window focused now and the one before it (`focus last`)
+    pub last_win: Option<Window>,
+    pub prev_win: Option<Window>,
     pub panels: Vec<crate::components::engine::widget_engine::Panel>,
-    /// None: the panels show on empty workspaces; Some: forced on or off with `panel`
+    /// None: the panels show on empty workspaces; Some: forced on or off with `welcome`
     pub panel_show: Option<bool>,
     pub bar_cache: std::collections::HashMap<String, (u64, smithay::backend::renderer::element::memory::MemoryRenderBuffer)>,
     pub solid_ids: std::collections::HashMap<(String, usize), smithay::backend::renderer::element::Id>,
@@ -162,6 +165,8 @@ impl Desktop {
             bar_dirty: true,
             known: Default::default(),
             last_focus: None,
+            last_win: None,
+            prev_win: None,
             panels: Vec::new(),
             panel_show: None,
             bar_cache: Default::default(),
@@ -418,6 +423,8 @@ impl Desktop {
         let id = now.as_ref().map(|n| n.0);
         if id != self.last_focus {
             self.last_focus = id;
+            self.prev_win = self.last_win.take();
+            self.last_win = self.focused().map(|(_, w)| w.clone());
             if let Some((id, app, title)) = now {
                 self.emit(Event::focus(id, &app, &title));
             }
@@ -438,6 +445,155 @@ impl Desktop {
         }
     }
 
+    /// Rectangles of the current workspace's windows on monitor `mi`, `None` for the ones not shown.
+    fn ws_rects(&self, mi: usize) -> Vec<Option<crate::components::engine::layout_engine::Rect>> {
+        use crate::components::engine::layout_engine::Rect;
+        let m = &self.mons[mi];
+        m.ws[m.cur]
+            .clients
+            .iter()
+            .map(|w| {
+                let g = self.space.element_geometry(w)?;
+                Some(Rect { x: g.loc.x, y: g.loc.y, w: g.size.w, h: g.size.h })
+            })
+            .collect()
+    }
+
+    fn mon_rects(&self) -> Vec<crate::components::engine::layout_engine::Rect> {
+        use crate::components::engine::layout_engine::Rect;
+        self.mons
+            .iter()
+            .map(|m| {
+                let g = self.space.output_geometry(&m.output).unwrap_or_default();
+                Rect { x: g.loc.x, y: g.loc.y, w: g.size.w, h: g.size.h }
+            })
+            .collect()
+    }
+
+    /// One window at a time (monocle, tabbed, deck): left/up is previous, right/down is next.
+    fn one_at_a_time(rects: &[Option<crate::components::engine::layout_engine::Rect>]) -> bool {
+        rects.len() > 1 && rects.iter().filter(|r| r.is_some()).count() <= 1
+    }
+
+    pub fn focus_dir(&mut self, d: crate::components::engine::focus_engine::Cardinal) {
+        use crate::components::engine::focus_engine::{Cardinal, monitor_towards, neighbor};
+        let mi = self.focus_mon.min(self.mons.len().saturating_sub(1));
+        if self.mons.is_empty() {
+            return;
+        }
+        let (cur, f) = (self.mons[mi].cur, self.mons[mi].ws[self.mons[mi].cur].focus);
+        let rects = self.ws_rects(mi);
+        if Self::one_at_a_time(&rects) {
+            let n = rects.len();
+            let dir = if matches!(d, Cardinal::Left | Cardinal::Up) { Dir::Prev } else { Dir::Next };
+            self.mons[mi].ws[cur].focus = Self::step(f, n, dir);
+            self.refocus();
+            return;
+        }
+        if let Some(i) = neighbor(&rects, f, d) {
+            self.focus_loc((mi, cur, i));
+            return;
+        }
+        // nothing that way on this monitor: go to the monitor beyond, onto its focused window
+        if let Some(to) = monitor_towards(&self.mon_rects(), mi, d) {
+            self.focus_mon = to;
+            self.refocus();
+        }
+    }
+
+    pub fn move_dir(&mut self, d: crate::components::engine::focus_engine::Cardinal) {
+        use crate::components::engine::focus_engine::{Cardinal, monitor_towards, neighbor};
+        if self.mons.is_empty() {
+            return;
+        }
+        let mi = self.focus_mon.min(self.mons.len() - 1);
+        let cur = self.mons[mi].cur;
+        let f = self.mons[mi].ws[cur].focus;
+        if f >= self.mons[mi].ws[cur].clients.len() {
+            return;
+        }
+        if self.mons[mi].ws[cur].layout == crate::components::engine::layout_engine::Layout::Float {
+            let w = self.mons[mi].ws[cur].clients[f].clone();
+            if let Some(loc) = self.space.element_location(&w) {
+                let (dx, dy) = match d {
+                    Cardinal::Left => (-60, 0),
+                    Cardinal::Right => (60, 0),
+                    Cardinal::Up => (0, -60),
+                    Cardinal::Down => (0, 60),
+                };
+                self.space.map_element(w, (loc.x + dx, loc.y + dy), true);
+            }
+            return;
+        }
+        let rects = self.ws_rects(mi);
+        if Self::one_at_a_time(&rects) {
+            let n = rects.len();
+            let to = Self::step(f, n, if matches!(d, Cardinal::Left | Cardinal::Up) { Dir::Prev } else { Dir::Next });
+            self.mons[mi].ws[cur].clients.swap(f, to);
+            self.mons[mi].ws[cur].focus = to;
+            self.refocus();
+            return;
+        }
+        if let Some(i) = neighbor(&rects, f, d) {
+            let ws = &mut self.mons[mi].ws[cur];
+            ws.clients.swap(f, i);
+            ws.focus = i;
+            self.refocus();
+        } else if let Some(to) = monitor_towards(&self.mon_rects(), mi, d) {
+            let w = self.mons[mi].ws[cur].clients.remove(f);
+            let ws = &mut self.mons[mi].ws[cur];
+            ws.focus = f.min(ws.clients.len().saturating_sub(1));
+            let tc = self.mons[to].cur;
+            self.mons[to].ws[tc].clients.insert(0, w);
+            self.mons[to].ws[tc].focus = 0;
+            self.focus_mon = to;
+            self.refocus();
+        }
+    }
+
+    /// Back to the window that had focus before this one (Alt-Tab style), across workspaces and monitors.
+    pub fn focus_last(&mut self) {
+        let Some(prev) = self.prev_win.clone() else { return };
+        for (mi, m) in self.mons.iter().enumerate() {
+            for (wi, ws) in m.ws.iter().enumerate() {
+                if let Some(ci) = ws.clients.iter().position(|c| *c == prev) {
+                    self.focus_loc((mi, wi, ci));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Focus follows the pointer: the window under it gets keyboard focus when it is not the focused one.
+    pub fn hover_focus(&mut self) {
+        if !self.config.focus_follows_mouse {
+            return;
+        }
+        let pos = self.pointer_loc;
+        let hit = self
+            .space
+            .element_under(pos)
+            .and_then(|(w, _)| w.toplevel().map(|t| t.wl_surface().clone()))
+            .and_then(|s| self.find_window(&s));
+        match hit {
+            Some(loc) => {
+                if self.focused().map(|(l, _)| l) != Some(loc) {
+                    self.focus_loc(loc);
+                }
+            }
+            None => {
+                // empty desktop under the pointer: at least the monitor under it becomes the focused one
+                let under = self.mon_rects().iter().position(|r| {
+                    pos.x >= r.x as f64 && pos.x < (r.x + r.w) as f64 && pos.y >= r.y as f64 && pos.y < (r.y + r.h) as f64
+                });
+                if let Some(mi) = under.filter(|mi| *mi != self.focus_mon) {
+                    self.focus_mon = mi;
+                    self.refocus();
+                }
+            }
+        }
+    }
+
     pub fn focus_loc(&mut self, loc: Loc) {
         let (mi, wi, ci) = loc;
         if self.window_at(loc).is_none() {
@@ -452,7 +608,13 @@ impl Desktop {
     /// (id, app_id, title) of a toplevel, for events and the bar.
     pub fn win_info(w: &Window) -> (u32, String, String) {
         let Some(t) = w.toplevel() else { return (0, String::new(), String::new()) };
-        let id = smithay::reexports::wayland_server::Resource::id(t.wl_surface()).protocol_id();
+        // protocol ids repeat between clients (each has its own numbering): hash the full object id
+        let id = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            smithay::reexports::wayland_server::Resource::id(t.wl_surface()).hash(&mut h);
+            (h.finish() % 1_000_000) as u32 + 1
+        };
         let (app, title) = smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
             s.data_map
                 .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
@@ -570,7 +732,7 @@ impl Desktop {
                     "hide" | "off" => self.panel_show = Some(false),
                     "auto" => self.panel_show = None,
                     "reload" => self.reload_panels(),
-                    _ => return "error: panel toggle|show|hide|auto|reload".into(),
+                    _ => return "error: welcome toggle|show|hide|auto|reload".into(),
                 }
                 self.bar_dirty = true;
             }
@@ -595,6 +757,9 @@ impl Desktop {
                     self.refocus();
                 }
             }
+            Action::FocusDir(d) => self.focus_dir(d),
+            Action::MoveDir(d) => self.move_dir(d),
+            Action::FocusLast => self.focus_last(),
             Action::Zoom => {
                 let ws = &mut self.mons[mi].ws[cur];
                 if ws.focus > 0 && ws.focus < ws.clients.len() {

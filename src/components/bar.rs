@@ -57,14 +57,13 @@ fn hash_of<T: Hash>(t: &T) -> u64 {
 }
 
 impl Desktop {
-    /// (left items, title, right items) of the status bar of monitor `mi`.
-    fn bar_items(&self, mi: usize) -> (Vec<Item>, String, Vec<Item>) {
+    /// (left items, right items) of the status bar of monitor `mi`.
+    fn bar_items(&self, mi: usize) -> (Vec<Item>, Vec<Item>) {
         let c = &self.config;
         let t = &c.theme;
         let m = &self.mons[mi];
         let sh = self.widgets.shared.lock().unwrap();
-        let mut title = String::new();
-        let mut one = |name: &str, out: &mut Vec<Item>, title: &mut String| match name {
+        let mut one = |name: &str, out: &mut Vec<Item>| match name {
             "tags" => {
                 for (i, ws) in m.ws.iter().enumerate() {
                     let label = format!(" {} ", i + 1);
@@ -78,16 +77,27 @@ impl Desktop {
                 }
             }
             "layout" => out.push(it(format!("[{}]", m.ws[m.cur].layout.name()), t.accent)),
-            "title" | "windows" => {
-                if let Some(w) = m.ws[m.cur].clients.get(m.ws[m.cur].focus) {
-                    *title = Desktop::win_info(w).2;
-                }
-            }
             "cpu" => out.push(it(format!("cpu {}%", sh.cpu), t.fg)),
             "ram" => out.push(it(format!("ram {}%", sh.ram), t.fg)),
+            "|" => out.push(it("|", t.dim)),
             "vol" => {
                 if let Some((v, muted)) = sh.vol {
                     out.push(it(if muted { "vol mute".to_string() } else { format!("vol {v}%") }, if muted { t.dim } else { t.fg }));
+                }
+            }
+            "mic" => {
+                if let Some((v, muted)) = sh.mic {
+                    out.push(it(if muted { "mic mute".to_string() } else { format!("mic {v}%") }, if muted { t.dim } else { t.fg }));
+                }
+            }
+            "gpu" => {
+                if let Some((g, _)) = sh.gpu {
+                    out.push(it(format!("gpu {g}%"), t.fg));
+                }
+            }
+            "vram" => {
+                if let Some((_, v)) = sh.gpu {
+                    out.push(it(format!("vram {v}%"), t.fg));
                 }
             }
             "bat" => {
@@ -96,7 +106,7 @@ impl Desktop {
                 }
             }
             "date" => out.push(it(widgets::now("%Y-%m-%d %a"), t.fg)),
-            "clock" => out.push(it(widgets::now("%H:%M:%S"), t.accent)),
+            "clock" | "time" => out.push(it(widgets::now("%H:%M:%S"), t.accent)),
             other => {
                 if let Some(txt) = sh.text.get(other).filter(|s| !s.is_empty()) {
                     let (fg, txt) = match txt.split_once(' ') {
@@ -109,12 +119,12 @@ impl Desktop {
         };
         let (mut left, mut right) = (Vec::new(), Vec::new());
         for n in &c.bar_left {
-            one(n, &mut left, &mut title);
+            one(n, &mut left);
         }
         for n in &c.bar_right {
-            one(n, &mut right, &mut title);
+            one(n, &mut right);
         }
-        (left, title, right)
+        (left, right)
     }
 
     fn cached(&mut self, key: String, w: i32, h: i32, hash: u64, draw: impl FnOnce(&mut Canvas)) -> MemoryRenderBuffer {
@@ -200,10 +210,10 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
 
     // status bar
     if pos != BarPos::Off {
-        let (left, title, right) = state.bar_items(mi);
+        let (left, right) = state.bar_items(mi);
         let w = geo.size.w;
         let key = format!("{name}:bar");
-        let hash = hash_of(&(&left, &title, &right, w, bh, t.name.clone(), scale));
+        let hash = hash_of(&(&left, &right, w, bh, t.name.clone(), scale));
         let buf = state.cached(key, w, bh, hash, |cv| {
             cv.rect(0, 0, w, bh, t.bar_bg);
             let cw = 8 * scale;
@@ -223,9 +233,6 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                 rx -= tw + pad * 2;
                 cv.text(rx + pad, ty, &i.text, i.fg, scale, w);
             }
-            if !title.is_empty() {
-                cv.text(x + pad, ty, &title, t.fg, scale, rx - pad);
-            }
             cv.rect(0, if pos == BarPos::Top { bh - 1 } else { 0 }, w, 1, t.border_normal);
         });
         let y = if pos == BarPos::Top { 0 } else { geo.size.h - bh };
@@ -233,7 +240,7 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             out.push(e.into());
         }
     }
-    // panels: key list and markdown widgets, on empty workspaces (or when forced with `panel show`)
+    // panels: key list and markdown widgets, on empty workspaces (or when forced with `welcome show`)
     if state.panel_visible(mi) {
         let top = if pos == BarPos::Top { bh } else { 0 };
         let bottom = if pos == BarPos::Bottom { bh } else { 0 };

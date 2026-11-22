@@ -1,6 +1,6 @@
-//! Panels: text widgets drawn on the desktop. One built-in panel lists the key bindings straight from the live
-//! config (so it can never go stale); every other panel is a markdown file: `panels/*.md` in the config dir and any
-//! `panel = PATH.md` line in the config. Markdown is rendered as plain terminal text (headings, lists, code, tables,
+//! The welcome widget: text drawn on the desktop (shown on an empty workspace). One built-in panel lists the key bindings straight from the live
+//! config (so it can never go stale); every other panel is a markdown file: `welcome/*.md` in the config dir and any
+//! `welcome = PATH.md` line in the config. Markdown is rendered as plain terminal text (headings, lists, code, tables,
 //! quotes; links and emphasis marks are stripped). Rows flow into columns, left to right.
 
 use std::hash::Hash;
@@ -131,13 +131,13 @@ fn file_panel(path: &std::path::Path) -> Option<Panel> {
     Some(Panel { title, lines })
 }
 
-/// Every panel the config asks for, in order: keys, `panels/*.md`, `panel = FILE` lines.
+/// Every panel the config asks for, in order: keys, `welcome/*.md`, `welcome = FILE` lines.
 pub fn load(cfg: &Config) -> Vec<Panel> {
     let mut out = Vec::new();
     if cfg.panel_keys {
         out.push(keys_panel(cfg));
     }
-    if let Some(dir) = crate::config::config_dir().map(|d| d.join("panels")) {
+    if let Some(dir) = crate::config::config_dir().map(|d| d.join("welcome")) {
         let mut files: Vec<_> = std::fs::read_dir(dir)
             .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect())
             .unwrap_or_default();

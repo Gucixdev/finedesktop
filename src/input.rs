@@ -49,12 +49,14 @@ impl Desktop {
                 use smithay::backend::input::PointerMotionEvent;
                 let pos = self.clamp_to_outputs(self.pointer_loc + event.delta());
                 self.move_pointer(pos, event.time());
+                self.hover_focus();
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
                 let Some(output) = self.mons.get(self.focus_mon).map(|m| m.output.clone()) else { return };
                 let Some(geo) = self.space.output_geometry(&output) else { return };
                 let pos = event.position_transformed(geo.size) + geo.loc.to_f64();
                 self.move_pointer(pos, event.time());
+                self.hover_focus();
             }
             InputEvent::PointerButton { event, .. } => {
                 let pointer = self.seat.get_pointer().unwrap();
