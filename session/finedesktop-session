@@ -1,9 +1,21 @@
 #!/bin/sh
 # SDDM session entry for finedesktop (DRM backend, logind provides the seat). Log: ~/.cache/finedesktop.log
+# `ctl session restart` saves the windows and exits with 75; the loop below then starts the installed binary again
+# (a newer one if it was replaced meanwhile) and the apps come back (components/restore.rs).
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=finedesktop MOZ_ENABLE_WAYLAND=1 FD_BACKEND=drm
 export XDG_DATA_DIRS=/data/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
 export FLATPAK_USER_DIR=/data/flatpak
 mkdir -p "$HOME/.cache"
 bin=$HOME/.local/bin/finedesktop
 [ -x "$bin" ] || bin=$(command -v finedesktop) || { echo "finedesktop not installed" >&2; exit 1; }
-exec "$bin" >"$HOME/.cache/finedesktop.log" 2>&1
+"$bin" >"$HOME/.cache/finedesktop.log" 2>&1
+code=$?
+# only the deliberate 75 restarts, at most 5 times in a row: a crash loop must not lock him out of the machine
+n=0
+while [ "$code" = 75 ] && [ "$n" -lt 5 ]; do
+    n=$((n + 1))
+    [ -x "$bin" ] || bin=$(command -v finedesktop) || exit 1
+    "$bin" >>"$HOME/.cache/finedesktop.log" 2>&1
+    code=$?
+done
+exit "$code"

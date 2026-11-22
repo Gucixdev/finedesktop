@@ -171,6 +171,8 @@ pub struct Config {
     pub mouse_follows_focus: bool,
     /// `tearing = on`: page flips do not wait for vblank (lower latency, visible tearing); DRM only, falls back when the driver refuses
     pub tearing: bool,
+    /// `restore = off`: do not start the apps of the last session again at start (components/restore.rs)
+    pub restore: bool,
     /// path of libfinedesktop_engine.so (hot-reloadable layout/focus engines); empty = the default below
     pub engine: String,
     /// xkb layout list and options, e.g. `kb_layout = pl,gb` and `kb_options = grp:shifts_toggle`
@@ -220,6 +222,7 @@ impl Default for Config {
             focus_follows_mouse: true,
             mouse_follows_focus: true,
             tearing: false,
+            restore: true,
             engine: String::new(),
             kb_layout: String::new(),
             kb_options: String::new(),
@@ -404,6 +407,7 @@ impl Config {
             "kb_options" => self.kb_options = val.into(),
             "engine" => self.engine = val.to_string(),
             "mouse_follows_focus" => self.mouse_follows_focus = matches!(val, "on" | "true" | "yes" | "1"),
+            "restore" => self.restore = matches!(val, "on" | "true" | "yes" | "1"),
             "tearing" => self.tearing = matches!(val, "on" | "true" | "yes" | "1"),
             "focus_follows_mouse" => self.focus_follows_mouse = matches!(val, "on" | "true" | "yes" | "1"),
             "widgets" => self.widgets = matches!(val, "on" | "true" | "yes" | "1"),

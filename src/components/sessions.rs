@@ -17,7 +17,10 @@ impl Desktop {
                 crate::keys::spawn(&format!("loginctl {what}"));
                 "ok".to_string()
             }
-            "" | "list" => return "lock logout suspend hibernate reboot poweroff".into(),
+            "" | "list" => return "lock logout suspend hibernate reboot poweroff save restore saved restart".into(),
+            w if w.split_whitespace().next().is_some_and(|v| matches!(v, "save" | "restore" | "saved" | "restart")) => {
+                return self.restore_cmd(w).unwrap_or_default();
+            }
             _ => return format!("error: unknown session action {what:?} (ctl session list)"),
         };
         self.emit(Event::user("session", what));

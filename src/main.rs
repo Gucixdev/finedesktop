@@ -71,6 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     state.add_component(Box::new(components::crash::Crash));
     state.add_component(Box::new(components::autostart::Autostart));
+    state.add_component(Box::new(components::restore::Restore::default()));
     state.add_component(Box::new(components::power::Power::default()));
     {
         // frame clock for update / fixed update / tick (flows/lifecycle.rs)
@@ -94,6 +95,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run(None, &mut state, move |_| {})?;
     state.life_destroy();
     let _ = std::fs::remove_file(sock);
+    if components::restore::RESTART.load(std::sync::atomic::Ordering::Relaxed) {
+        std::process::exit(components::restore::EXIT_RESTART);
+    }
     Ok(())
 }
 

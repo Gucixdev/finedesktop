@@ -42,7 +42,7 @@ impl Rule {
 impl Desktop {
     /// Apply the rules to windows that have an app id now and were not handled yet.
     pub fn apply_rules(&mut self) {
-        if self.config.rules.is_empty() {
+        if self.config.rules.is_empty() && self.pending.is_empty() {
             return;
         }
         let mut todo = Vec::new();
@@ -58,7 +58,14 @@ impl Desktop {
         }
         for (id, app, mi, from) in todo {
             self.ruled.insert(id);
-            let Some(rule) = self.config.rules.iter().find(|r| r.matches(&app)).cloned() else { continue };
+            // a place saved before a restart wins over the rules: it is where this very app sat
+            let rule = match crate::components::restore::take(&mut self.pending, &app) {
+                Some(row) => Rule { app: app.clone(), ws: Some(row.ws + 1), name: Some(row.name).filter(|n| !n.is_empty()), tags: row.tags },
+                None => match self.config.rules.iter().find(|r| r.matches(&app)).cloned() {
+                    Some(r) => r,
+                    None => continue,
+                },
+            };
             if let Some(n) = &rule.name {
                 self.names.insert(id, n.clone());
             }

@@ -81,6 +81,12 @@ Every action is also its own command: `./links` makes `fd-trash`, `fd-notify`, `
 `fd-screenrecord`, `fd-menu`, `fd-name`, `fd-log`, `fd-layout`, ... next to `finedesktop` (symlinks, the binary reads
 its own name). `fd-notify hi` is `finedesktop ctl notify hi`. Trash needs no compositor at all.
 
+- `restore = on` (default): the desktop keeps `~/.local/state/finedesktop/sessions/last.tsv` up to date (app, command, working folder,
+  monitor, workspace, tab name, tags) and at the next start launches the apps that have no window yet and puts each new window back
+  where its predecessor sat. Wayland windows cannot survive a compositor restart, so what returns is the app and its place, not its
+  contents (a browser or editor restores its own tabs). `ctl session save|restore [NAME]`, `ctl session saved`, and
+  `ctl session restart` (save, exit 75; `finedesktop-session` starts the installed binary again, up to 5 times in a row). A Flatpak
+  app is started from its .desktop entry. Not tested on a live session.
 - **trash**: `fd-trash FILE...` moves into the freedesktop trash (`~/.local/share/Trash`), `fd-trash list`,
   `fd-trash restore NAME`. Never deletes; emptying is yours.
 - **notify**: `fd-notify TEXT` shows in the bar for 8 s (bar item `notify`), `fd-notify list|clear`, hook `on-notify`

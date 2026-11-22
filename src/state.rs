@@ -100,6 +100,8 @@ pub struct Desktop {
     pub fx: crate::components::fx::Fx,
     /// windows the rules have been applied to
     pub ruled: std::collections::HashSet<u32>,
+    /// places saved for apps that were started again after a restart (components/restore.rs)
+    pub pending: Vec<crate::components::restore::Row>,
     pub low_warned: bool,
     /// custom tab labels by window id (`ctl name`)
     pub names: std::collections::HashMap<u32, String>,
@@ -204,6 +206,7 @@ impl Desktop {
             notes: Default::default(),
             fx: Default::default(),
             ruled: Default::default(),
+            pending: Vec::new(),
             low_warned: false,
             names: Default::default(),
             panel_show: None,
