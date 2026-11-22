@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Start finedesktop on a bare tty (DRM + libinput, no host compositor). Run it from a login tty, e.g. Ctrl+Alt+F2.
+# Builds the release binary when it is missing. Log: ~/.cache/finedesktop.log. Config: ~/.config/finedesktop/
+set -u
+cd "$(dirname "$(readlink -f "$0")")"
+bin=$PWD/target/release/finedesktop
+[ -x "$bin" ] || cargo build --release || exit 1
+
+# a session needs a runtime dir and a seat (logind/elogind or seatd)
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+  export XDG_RUNTIME_DIR=/run/user/$(id -u)
+  [ -d "$XDG_RUNTIME_DIR" ] || { XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"; export XDG_RUNTIME_DIR; }
+fi
+if ! loginctl show-session "${XDG_SESSION_ID:-}" >/dev/null 2>&1 && ! pgrep -x seatd >/dev/null; then
+  echo "no logind session and no seatd running: start seatd (and be in the 'seat' group) or log in on a tty" >&2
+  exit 1
+fi
+
+export FD_BACKEND=drm XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=finedesktop MOZ_ENABLE_WAYLAND=1
+export RUST_LOG=${RUST_LOG:-info,smithay=warn}
+mkdir -p "$HOME/.cache"
+exec "$bin" >"$HOME/.cache/finedesktop.log" 2>&1
