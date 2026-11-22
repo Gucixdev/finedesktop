@@ -456,7 +456,7 @@ fn rows_of(doc: &Doc, colw: usize) -> Vec<Row> {
 /// Everything the widget shows in a `width` x `height` pixel area, as positioned text runs.
 pub fn layout(w: &Welcome, width: i32, height: i32, scale: i32) -> Vec<Draw> {
     let Some(page) = w.page() else { return Vec::new() };
-    let (cw, ch) = (8 * scale, 16 * scale);
+    let (cw, ch) = { let f = crate::components::font::Font::current(); (f.w * scale, f.h * scale) };
     let mut out = Vec::new();
     let mut d = |x: i32, y: i32, text: &str, role: Role, hit: Option<Hit>, underline: bool| {
         out.push(Draw { x, y, text: text.to_string(), role, underline, hit });
@@ -498,7 +498,7 @@ pub fn layout(w: &Welcome, width: i32, height: i32, scale: i32) -> Vec<Draw> {
 }
 
 pub fn render(w: &Welcome, cv: &mut Canvas, th: &Theme, scale: i32) {
-    let (cw, ch) = (8 * scale, 16 * scale);
+    let (cw, ch) = { let f = crate::components::font::Font::current(); (f.w * scale, f.h * scale) };
     for d in layout(w, cv.w, cv.h, scale) {
         let n = d.text.chars().count() as i32;
         let fg = match d.role {
@@ -520,7 +520,7 @@ pub fn render(w: &Welcome, cv: &mut Canvas, th: &Theme, scale: i32) {
 
 /// What is under the pixel (x, y) of a `width` x `height` widget.
 pub fn hit_at(w: &Welcome, width: i32, height: i32, scale: i32, x: i32, y: i32) -> Option<Hit> {
-    let (cw, ch) = (8 * scale, 16 * scale);
+    let (cw, ch) = { let f = crate::components::font::Font::current(); (f.w * scale, f.h * scale) };
     layout(w, width, height, scale).into_iter().find_map(|d| {
         let n = d.text.chars().count() as i32;
         (d.hit.is_some() && x >= d.x && x < d.x + n * cw && y >= d.y && y < d.y + ch).then_some(d.hit).flatten()
@@ -569,7 +569,7 @@ impl Desktop {
         let (scale, bh, pos) = (self.config.font_scale, self.config.bar_height(), self.config.bar);
         let top = if pos == crate::config::BarPos::Top { bh } else { 0 };
         let bottom = if pos == crate::config::BarPos::Bottom { bh } else { 0 };
-        let m = 16 * scale;
+        let m = crate::components::font::Font::current().h * scale;
         let (w, h) = (geo.size.w - 2 * m, geo.size.h - top - bottom - 2 * m);
         (w > 80 && h > 32).then_some((m, top + m, w, h))
     }

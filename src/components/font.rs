@@ -1,11 +1,18 @@
-//! Bitmap font (Terminus 8x16, PSF2 with unicode table, Latin-2 so Polish letters work) and a tiny software canvas.
-//! No font library: the bar and the tab bars are drawn here into an ARGB8888 buffer.
+//! Bitmap fonts and a tiny software canvas. Built in: Terminus 8x16 (PSF2 with unicode table, Latin-2 so Polish letters
+//! work). `font = PATH` in the config loads a `.bdf` (X11 bitmap font, e.g. Fixed 6x13) or a `.psf` instead; a path that
+//! cannot be read keeps the built-in one. No font library: the bar, the menu and the tab bars are drawn here into an
+//! ARGB8888 buffer, and every size in them comes from the current font's cell.
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{OnceLock, RwLock},
+};
 
 use super::theme::Rgb;
 
 const PSF: &[u8] = include_bytes!("../.finedesktop/fonts/terminus16.psf");
+
+static CURRENT: RwLock<Option<&'static Font>> = RwLock::new(None);
 
 pub struct Font {
     pub w: i32,
@@ -64,6 +71,86 @@ impl Font {
         Some(Font { w: w as i32, h: h as i32, row_bytes: w.div_ceil(8), glyphs: d[headersize..glyph_end].to_vec(), charsize, map })
     }
 
+    /// A BDF font. The cell is FONTBOUNDINGBOX; each glyph is placed in it by its own BBX. Encodings are unicode code points.
+    pub fn parse_bdf(text: &str) -> Option<Font> {
+        let num = |l: &str, i: usize| l.split_whitespace().nth(i).and_then(|v| v.parse::<i32>().ok());
+        let mut cell: Option<(i32, i32, i32, i32)> = None; // w h xoff yoff
+        let mut lines = text.lines();
+        let mut raw: Vec<(char, (i32, i32, i32, i32), Vec<Vec<u8>>)> = Vec::new();
+        while let Some(l) = lines.next() {
+            if l.starts_with("FONTBOUNDINGBOX") {
+                cell = Some((num(l, 1)?, num(l, 2)?, num(l, 3)?, num(l, 4)?));
+            } else if l.starts_with("STARTCHAR") {
+                let (mut enc, mut bbx) = (-1, (0, 0, 0, 0));
+                let mut rows = Vec::new();
+                for l in lines.by_ref() {
+                    if l.starts_with("ENCODING") {
+                        enc = num(l, 1).unwrap_or(-1);
+                    } else if l.starts_with("BBX") {
+                        bbx = (num(l, 1)?, num(l, 2)?, num(l, 3)?, num(l, 4)?);
+                    } else if l.starts_with("BITMAP") {
+                        for r in lines.by_ref() {
+                            if r.starts_with("ENDCHAR") {
+                                break;
+                            }
+                            rows.push((0..r.len() / 2).filter_map(|i| u8::from_str_radix(r.get(2 * i..2 * i + 2)?, 16).ok()).collect());
+                        }
+                        break;
+                    }
+                }
+                if let Some(c) = u32::try_from(enc).ok().and_then(char::from_u32) {
+                    raw.push((c, bbx, rows));
+                }
+            }
+        }
+        let (fw, fh, fx, fy) = cell?;
+        if fw <= 0 || fh <= 0 || raw.is_empty() {
+            return None;
+        }
+        let row_bytes = (fw as usize).div_ceil(8);
+        let charsize = row_bytes * fh as usize;
+        let (mut glyphs, mut map) = (Vec::with_capacity(raw.len() * charsize), HashMap::new());
+        for (idx, (c, (gw, gh, gx, gy), rows)) in raw.into_iter().enumerate() {
+            let mut g = vec![0u8; charsize];
+            for (ri, row) in rows.iter().enumerate().take(gh.max(0) as usize) {
+                let y = fy + fh - (gy + gh) + ri as i32;
+                if !(0..fh).contains(&y) {
+                    continue;
+                }
+                for col in 0..gw.max(0) {
+                    if row.get(col as usize / 8).is_some_and(|b| b & (0x80 >> (col % 8)) != 0) {
+                        let x = gx - fx + col;
+                        if (0..fw).contains(&x) {
+                            g[y as usize * row_bytes + x as usize / 8] |= 0x80 >> (x % 8);
+                        }
+                    }
+                }
+            }
+            glyphs.extend(g);
+            map.insert(c, idx);
+        }
+        Some(Font { w: fw, h: fh, row_bytes, glyphs, charsize, map })
+    }
+
+    /// Make the font at `path` the current one (BDF or PSF by content); an empty or unreadable path means the built-in.
+    pub fn select(path: &str) -> Result<(), String> {
+        let font = if path.is_empty() {
+            None
+        } else {
+            let d = std::fs::read(path).map_err(|e| format!("font {path}: {e}"))?;
+            let f = if d.starts_with(&[0x72, 0xb5, 0x4a, 0x86]) { Font::parse(&d) } else { Font::parse_bdf(&String::from_utf8_lossy(&d)) };
+            // a font is loaded once per path and lives as long as the process: reloading the same config costs nothing
+            Some(&*Box::leak(Box::new(f.ok_or_else(|| format!("font {path}: not a BDF or PSF2 font"))?)))
+        };
+        *CURRENT.write().unwrap() = font;
+        Ok(())
+    }
+
+    /// The font everything is drawn with: the selected one, else the built-in.
+    pub fn current() -> &'static Font {
+        (*CURRENT.read().unwrap()).unwrap_or_else(Font::builtin)
+    }
+
     pub fn builtin() -> &'static Font {
         static F: OnceLock<Font> = OnceLock::new();
         F.get_or_init(|| Font::parse(PSF).expect("built-in font"))
@@ -103,12 +190,12 @@ impl Canvas {
 
     /// Width of `s` in pixels at integer `scale`.
     pub fn text_width(s: &str, scale: i32) -> i32 {
-        s.chars().count() as i32 * Font::builtin().w * scale
+        s.chars().count() as i32 * Font::current().w * scale
     }
 
     /// Draw `s` with its top-left at (x, y); returns the x after the last glyph. Clipped at `max_x`.
     pub fn text(&mut self, x: i32, y: i32, s: &str, fg: Rgb, scale: i32, max_x: i32) -> i32 {
-        let f = Font::builtin();
+        let f = Font::current();
         let mut cx = x;
         for ch in s.chars() {
             if cx + f.w * scale > max_x.min(self.w) {
@@ -137,6 +224,30 @@ mod tests {
     fn font_loads_with_polish_letters() {
         let f = Font::builtin();
         assert_eq!((f.w, f.h), (8, 16));
+        for c in "aAzZ09ąęłńóśźżĄĘŁŃÓŚŹŻ".chars() {
+            assert!(f.map.contains_key(&c), "missing {c}");
+        }
+    }
+
+    #[test]
+    fn bdf_glyphs_land_in_the_cell_by_their_bbx() {
+        // 4x5 cell, baseline 1 above the bottom (yoff -1); "A" is a 3x3 box at x=1, bottom on the baseline
+        let bdf = "FONTBOUNDINGBOX 4 5 0 -1\nSTARTCHAR A\nENCODING 65\nBBX 3 3 1 0\nBITMAP\nE0\n40\nA0\nENDCHAR\nSTARTCHAR ae\nENCODING 261\nBBX 4 5 0 -1\nBITMAP\n00\n00\n00\n00\nF0\nENDCHAR\nSTARTCHAR skip\nENCODING -1\nBBX 1 1 0 0\nBITMAP\n80\nENDCHAR\n";
+        let f = Font::parse_bdf(bdf).unwrap();
+        assert_eq!((f.w, f.h), (4, 5));
+        assert!(f.map.contains_key(&'A') && f.map.contains_key(&'ą') && f.map.len() == 2);
+        // rows top to bottom: cell top is 4 above the baseline, the glyph top is 3 above -> glyph starts on row 1
+        let g = f.glyph('A');
+        assert_eq!(g, [0x00, 0x70, 0x20, 0x50, 0x00]);
+        assert_eq!(f.glyph('ą'), [0x00, 0x00, 0x00, 0x00, 0xF0]);
+        assert!(Font::parse_bdf("nothing").is_none());
+    }
+
+    #[test]
+    fn the_users_fixed_6x13_loads_when_it_is_installed() {
+        let Some(path) = std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".local/share/fonts/Fixed6x13.bdf")).filter(|p| p.is_file()) else { return };
+        let f = Font::parse_bdf(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!((f.w, f.h), (6, 13));
         for c in "aAzZ09ąęłńóśźżĄĘŁŃÓŚŹŻ".chars() {
             assert!(f.map.contains_key(&c), "missing {c}");
         }

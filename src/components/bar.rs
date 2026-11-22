@@ -24,7 +24,7 @@ use smithay::{
 
 use super::{
     engine::layout_engine::BarKind,
-    font::Canvas,
+    font::{self, Canvas},
     theme::{Rgb, to_f32},
     widgets,
 };
@@ -226,7 +226,8 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
     let (t, scale, bh, pos) = (state.config.theme.clone(), state.config.font_scale, state.config.bar_height(), state.config.bar);
     let name = output.name();
     let pad = 6;
-    let ty = (bh - 16 * scale) / 2;
+    let (fcw, fch) = { let f = font::Font::current(); (f.w, f.h) };
+    let ty = (bh - fch * scale) / 2;
 
     // window borders (inside the window rectangle), focused one in the focus colour
     if t.border > 0 {
@@ -279,7 +280,7 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                 };
                 let (bg, fg) = if i == focus { (t.sel_bg, t.sel_fg) } else { (t.bar_bg, t.dim) };
                 cv.rect(x, y, w - 1, h, bg);
-                cv.text(x + pad, y + (h - 16 * scale) / 2, ti, fg, scale, x + w - 1);
+                cv.text(x + pad, y + (h - fch * scale) / 2, ti, fg, scale, x + w - 1);
             }
         });
         let at: Point<f64, Physical> = ((r.x - geo.loc.x) as f64, (r.y - geo.loc.y) as f64).into();
@@ -296,7 +297,7 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
         let hash = hash_of(&(&left, &right, w, bh, t.name.clone(), scale));
         let buf = state.cached(key, w, bh, hash, |cv| {
             cv.rect(0, 0, w, bh, t.bar_bg);
-            let cw = 8 * scale;
+            let cw = fcw * scale;
             let mut x = 0;
             for i in &left {
                 let tw = item_w(i, cw, scale);
@@ -363,11 +364,11 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
         if let Some(menu) = state.menu.as_ref() {
             // 2x text on a big screen; the panel takes most of it, like the old dmenu setup
             let ms = if geo.size.h >= 900 { scale * 2 } else { scale };
-            let lh = 16 * ms;
+            let lh = fch * ms;
             let tabs = menu.tabs();
-            let tabw = tabs.as_ref().map_or(0, |t| (t.labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as i32 + 3) * 8 * ms);
+            let tabw = tabs.as_ref().map_or(0, |t| (t.labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as i32 + 3) * fcw * ms);
             let wide = if tabs.is_some() { 4 } else { 3 };
-            let w = (geo.size.w * wide / 5).clamp(320.min(geo.size.w), 110 * 8 * ms + tabw).min(geo.size.w - 16);
+            let w = (geo.size.w * wide / 5).clamp(320.min(geo.size.w), 110 * fcw * ms + tabw).min(geo.size.w - 16);
             let max_h = (geo.size.h - bh) * 4 / 5;
             let cap = ((max_h - 2 * pad) / lh - 2).max(1) as usize;
             // the right side: the open level, or (cursor on the tabs) a preview of the tab under the cursor
