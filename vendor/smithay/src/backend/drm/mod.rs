@@ -515,3 +515,6 @@ fn plane_size_hints(
     }
     Ok(None)
 }
+
+/// finedesktop: when set, atomic page flips ask for tearing (`PAGE_FLIP_ASYNC`) and fall back to a normal flip if refused.
+pub static TEARING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

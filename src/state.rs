@@ -70,6 +70,8 @@ pub struct Desktop {
     pub mons: Vec<Mon>,
     pub focus_mon: usize,
     pub pointer_loc: Point<f64, Logical>,
+    /// set while the pointer itself moves focus (focus_follows_mouse), so `mouse_follows_focus` does not fight it
+    pub hovering: bool,
 
     /// `finedesktop ctl subscribe` clients: every event is written to them as one line
     pub bus: crate::flows::bus::Bus,
@@ -177,6 +179,7 @@ impl Desktop {
             mons: Vec::new(),
             focus_mon: 0,
             pointer_loc: (0.0, 0.0).into(),
+            hovering: false,
             bus: Default::default(),
             life: Default::default(),
             tags: Default::default(),
@@ -466,6 +469,27 @@ impl Desktop {
         if let Some(kb) = self.seat.get_keyboard() {
             kb.set_focus(self, surf, serial);
         }
+        if self.config.mouse_follows_focus && !self.hovering && self.layer_focus.is_none() {
+            self.warp_to_focused();
+        }
+    }
+
+    /// Put the pointer in the middle of the focused window, unless it is inside that window already.
+    fn warp_to_focused(&mut self) {
+        let Some(g) = self.focused().and_then(|(_, w)| self.space.element_geometry(w)) else { return };
+        let p = self.pointer_loc;
+        if p.x >= g.loc.x as f64 && p.x < (g.loc.x + g.size.w) as f64 && p.y >= g.loc.y as f64 && p.y < (g.loc.y + g.size.h) as f64 {
+            return;
+        }
+        let to = (g.loc.x as f64 + g.size.w as f64 / 2.0, g.loc.y as f64 + g.size.h as f64 / 2.0).into();
+        self.pointer_loc = to;
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let under = self.surface_under(to);
+        let time = smithay::backend::input::InputTime::now();
+        pointer.motion(self, under, &smithay::input::pointer::MotionEvent { location: to, serial, time });
+        pointer.frame(self);
+        self.bar_dirty = true;
     }
 
     /// Rectangles of the current workspace's windows on monitor `mi`, `None` for the ones not shown.
@@ -602,6 +626,12 @@ impl Desktop {
         if !self.config.focus_follows_mouse {
             return;
         }
+        self.hovering = true;
+        self.hover_focus_inner();
+        self.hovering = false;
+    }
+
+    fn hover_focus_inner(&mut self) {
         let pos = self.pointer_loc;
         let hit = self
             .space

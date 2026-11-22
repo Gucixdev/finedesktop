@@ -52,6 +52,15 @@ started in the background with `FD_*` variables), `widgets/NAME` (executable, sh
 Built-in bar items: `cpu gpu ram vram` (numbers), `cpu-graph gpu-graph ram-graph vram-graph` (last 30 samples as a mini graph, red above 90%), `disk` (free space) and `disk-bar` (used, as a bar) of the filesystem named by `disk = PATH`.
 A theme is a separate setting from a mode: a theme is how it looks, a mode is how the system behaves.
 
+## Look and feel options (config)
+
+- `font = PATH` a `.bdf` or `.psf` bitmap font (default `~/.local/share/fonts/Fixed6x13.bdf`; missing file = built-in
+  Terminus 8x16); `font_scale = 2` doubles it. Bar, menu and tab sizes follow the font cell.
+- `mouse_follows_focus = on` (default): when a key moves focus, the pointer jumps to the middle of that window, unless it is
+  inside it already. `focus_follows_mouse` is the other direction.
+- `tearing = on` (default off): DRM page flips do not wait for vblank (lower latency, visible tearing). Falls back to a
+  normal flip when the driver refuses; not verified on real hardware yet. Applied by `ctl reload`.
+
 ## Menu and logs
 
 `Mod+Shift+W` opens the menu: Aplikacje (ONE list with sections Flatpak / Natywne / Gry), Schowek, Skrypty

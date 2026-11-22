@@ -164,6 +164,10 @@ pub struct Config {
     pub widgets: bool,
     /// the window under the pointer takes keyboard focus when the pointer moves onto it
     pub focus_follows_mouse: bool,
+    /// the pointer jumps to the window that gets focus by key (it stays when it is already inside it)
+    pub mouse_follows_focus: bool,
+    /// `tearing = on`: page flips do not wait for vblank (lower latency, visible tearing); DRM only, falls back when the driver refuses
+    pub tearing: bool,
     /// path of libfinedesktop_engine.so (hot-reloadable layout/focus engines); empty = the default below
     pub engine: String,
     /// xkb layout list and options, e.g. `kb_layout = pl,gb` and `kb_options = grp:shifts_toggle`
@@ -209,6 +213,8 @@ impl Default for Config {
             tab_height: 0,
             widgets: true,
             focus_follows_mouse: true,
+            mouse_follows_focus: true,
+            tearing: false,
             engine: String::new(),
             kb_layout: String::new(),
             kb_options: String::new(),
@@ -390,6 +396,8 @@ impl Config {
             "kb_layout" => self.kb_layout = val.into(),
             "kb_options" => self.kb_options = val.into(),
             "engine" => self.engine = val.to_string(),
+            "mouse_follows_focus" => self.mouse_follows_focus = matches!(val, "on" | "true" | "yes" | "1"),
+            "tearing" => self.tearing = matches!(val, "on" | "true" | "yes" | "1"),
             "focus_follows_mouse" => self.focus_follows_mouse = matches!(val, "on" | "true" | "yes" | "1"),
             "widgets" => self.widgets = matches!(val, "on" | "true" | "yes" | "1"),
             "enter" => self.enter = val.into(),
@@ -468,6 +476,7 @@ impl Config {
                 }
             }
         }
+        smithay::backend::drm::TEARING.store(c.tearing, std::sync::atomic::Ordering::Relaxed);
         // the font is process-wide state: a path that cannot be read leaves the built-in one in place
         if let Err(e) = crate::components::font::Font::select(&c.font) {
             tracing::warn!("{e}");
@@ -557,6 +566,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn mouse_follows_focus_is_on_and_tearing_off_by_default_and_both_parse() {
+        let mut c = default_cfg();
+        assert!(c.mouse_follows_focus && !c.tearing);
+        assert!(c.apply("mouse_follows_focus = off\ntearing = on").is_empty());
+        assert!(!c.mouse_follows_focus && c.tearing);
+        assert_eq!(c.font, "~/.local/share/fonts/Fixed6x13.bdf".replacen("~", &std::env::var("HOME").unwrap_or_default(), 1));
+    }
 
     fn default_cfg() -> Config {
         let mut c = Config::default();

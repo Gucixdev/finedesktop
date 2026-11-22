@@ -893,17 +893,19 @@ impl AtomicDrmSurface {
         // If we would set anything here, that would require a modeset, this would fail,
         // indicating a problem in our assumptions.
         trace!(?planes, "Queueing page flip: {:?}", req);
-        let res = self
-            .fd
-            .atomic_commit(
-                if event {
-                    AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK
-                } else {
-                    AtomicCommitFlags::NONBLOCK
-                },
-                req.build()?,
-            )
-            .map_err(|source| {
+        let flags = if event {
+            AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK
+        } else {
+            AtomicCommitFlags::NONBLOCK
+        };
+        // finedesktop: tearing = on asks for an async flip (no wait for vblank); a driver that refuses gets a normal one
+        let tearing = crate::backend::drm::TEARING.load(Ordering::Relaxed);
+        let tried = if tearing { Some(self.fd.atomic_commit(flags | AtomicCommitFlags::PAGE_FLIP_ASYNC, req.build()?)) } else { None };
+        let res = match tried {
+            Some(Ok(())) => Ok(()),
+            _ => self.fd.atomic_commit(flags, req.build()?),
+        }
+        .map_err(|source| {
                 Error::Access(AccessError {
                     errmsg: "Page flip commit failed",
                     dev: self.fd.dev_path(),
