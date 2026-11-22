@@ -41,6 +41,8 @@ pub enum Action {
     Reload,
     ReloadEngine,
     Layouts,
+    /// `ctl menu ...`; also what the keys do while the menu is open
+    Menu(String),
     Focus(Dir),
     /// `focus left|right|up|down`: the window in that direction, or the monitor beyond it
     FocusDir(crate::components::engine::focus_engine::Cardinal),
@@ -203,6 +205,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "reload" => Action::Reload,
         "reload-engine" => Action::ReloadEngine,
         "layouts" => Action::Layouts,
+        "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State,
         "zoom" => Action::Zoom,
         "theme" if !rest.is_empty() => Action::Theme(rest.into()),

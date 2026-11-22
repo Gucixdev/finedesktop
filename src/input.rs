@@ -13,6 +13,36 @@ use smithay::{
 
 use crate::state::Desktop;
 
+/// What a key does in the menu, as a `ctl menu` command.
+fn menu_key(sym: smithay::input::keyboard::Keysym, ctrl: bool) -> String {
+    let c = sym.key_char();
+    if ctrl {
+        return match c {
+            Some('n') | Some('j') => "key down",
+            Some('p') | Some('k') => "key up",
+            Some('g') | Some('c') => "key esc",
+            Some('h') => "key backspace",
+            Some('m') => "key enter",
+            _ => "noop",
+        }
+        .into();
+    }
+    match sym.raw() {
+        0xff1b => "key esc".into(),
+        0xff0d | 0xff8d => "key enter".into(),
+        0xff08 => "key backspace".into(),
+        0xff52 => "key up".into(),
+        0xff54 | 0xff09 => "key down".into(),
+        0xff55 => "key pageup".into(),
+        0xff56 => "key pagedown".into(),
+        0x20 => "key space".into(),
+        _ => match c {
+            Some(ch) if !ch.is_control() => format!("type {ch}"),
+            _ => "noop".into(),
+        },
+    }
+}
+
 impl Desktop {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         match event {
@@ -27,6 +57,13 @@ impl Desktop {
                     serial,
                     time,
                     |state, mods, handle| {
+                        // while the menu is open it takes every key (Super+binds still work, so Super+W closes it)
+                        if state.menu.is_some() && !mods.logo {
+                            if event.state() != KeyState::Pressed {
+                                return FilterResult::Intercept(crate::config::Action::Menu("noop".into()));
+                            }
+                            return FilterResult::Intercept(crate::config::Action::Menu(menu_key(handle.modified_sym(), mods.ctrl)));
+                        }
                         if event.state() != KeyState::Pressed {
                             return FilterResult::Forward;
                         }
@@ -154,5 +191,25 @@ impl Desktop {
         let under = self.surface_under(pos);
         pointer.motion(self, under, &MotionEvent { location: pos, serial, time });
         pointer.frame(self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::menu_key;
+    use smithay::input::keyboard::Keysym;
+
+    #[test]
+    fn menu_keys_map_to_ctl_commands() {
+        let k = |raw, ctrl| menu_key(Keysym::new(raw), ctrl);
+        assert_eq!(k(0xff0d, false), "key enter");
+        assert_eq!(k(0xff1b, false), "key esc");
+        assert_eq!(k(0xff08, false), "key backspace");
+        assert_eq!(k(0x20, false), "key space");
+        assert_eq!(k(0x61, false), "type a");
+        assert_eq!(k(0x41, false), "type A");
+        assert_eq!(k(0x6e, true), "key down");
+        assert_eq!(k(0x70, true), "key up");
+        assert_eq!(k(0xffe1, false), "noop"); // shift alone types nothing
     }
 }

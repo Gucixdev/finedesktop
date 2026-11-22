@@ -116,6 +116,19 @@ ctl reload-engine 2>&1 | grep -q '^error' && ok "broken engine library refused" 
 ctl layout grid 2>&1 | grep -q '^ok' && ok "layouts still work after a refused reload" || bad "layout after refused reload"
 ctl layout tile >/dev/null; cp "$log/engine.good" "$log/engine.so"
 
+# the menu, driven like an agent would: open, type, select
+ctl menu open settings | grep -q '^ok' && ok "menu opens" || bad "menu open"
+ctl menu list | head -1 | grep -q '^Menu > Ustawienia$' && ok "menu shows its breadcrumb" || bad "menu breadcrumb"
+ctl menu type uklad >/dev/null; ctl menu key enter >/dev/null
+ctl menu type mono >/dev/null; ctl menu list | sed -n 2p | grep -q 'monocle' && ok "menu filters" || bad "menu filter"
+ctl menu key enter >/dev/null; sleep 0.3
+ctl state | head -1 | grep -q 'layout monocle' && ok "menu entry changes the layout" || bad "menu layout entry"
+ctl menu list 2>&1 | grep -q 'not open' && ok "menu closes after a choice" || bad "menu stayed open"
+ctl layout tile >/dev/null
+ctl menu open apps >/dev/null; ctl menu key backspace >/dev/null; ctl menu list | head -1 | grep -q '^Menu$' && ok "backspace leaves a level" || bad "backspace level"
+ctl menu key esc >/dev/null; ctl menu list 2>&1 | grep -q 'not open' && ok "esc closes the menu" || bad "esc"
+ctl menu open nonsense 2>&1 | grep -q '^error' && ok "bad menu id rejected" || bad "bad menu id"
+
 ctl bogus >/dev/null 2>&1 && bad "bogus action accepted" || ok "bogus action rejected"
 ctl layout nope 2>&1 | grep -q '^error' && ok "bad layout rejected" || bad "bad layout accepted"
 

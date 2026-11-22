@@ -7,3 +7,5 @@ pub mod theme;
 pub mod hooks;
 pub mod widgets;
 pub mod bar;
+pub mod apps;
+pub mod menu;

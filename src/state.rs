@@ -77,6 +77,7 @@ pub struct Desktop {
     pub mode: Option<(String, Box<Config>, String)>,
     pub widgets: crate::components::widgets::Widgets,
     pub engine: crate::engine_host::EngineHost,
+    pub menu: Option<crate::components::menu::Menu>,
     /// something the bar shows changed; redraw on the next frame
     pub bar_dirty: bool,
     /// windows already announced: id -> (app_id, title)
@@ -170,6 +171,7 @@ impl Desktop {
             mode: None,
             widgets: crate::components::widgets::Widgets::start(),
             engine: Default::default(),
+            menu: None,
             bar_dirty: true,
             known: Default::default(),
             last_focus: None,
@@ -750,6 +752,7 @@ impl Desktop {
                     }
                 }
             }
+            Action::Menu(c) => return self.menu_cmd(&c),
             Action::Layouts => return Layout::ALL.iter().map(|l| l.name()).collect::<Vec<_>>().join(" "),
             Action::ReloadEngine => {
                 return match self.reload_engine() {

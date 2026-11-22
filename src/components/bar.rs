@@ -263,5 +263,46 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             }
         }
     }
+    // the menu: one list panel above everything, on the monitor that has focus
+    if mi == state.focus_mon {
+        if let Some(menu) = state.menu.as_ref() {
+            let vis = menu.visible();
+            let rows = vis.len().min(16);
+            let cur = menu.sel.min(vis.len().saturating_sub(1));
+            let first = (cur + 1).saturating_sub(rows);
+            let items = &menu.level().items;
+            let shown: Vec<String> = vis.iter().skip(first).take(rows).map(|&i| items[i].label.clone()).collect();
+            let sel = cur - first;
+            let head = format!("{} > {}_", menu.crumbs(), menu.query);
+            let count = format!("{}/{}", vis.len(), items.len());
+            let lh = 16 * scale;
+            let w = (geo.size.w - 32 * scale).min(80 * 8 * scale);
+            let h = (rows as i32 + 2) * lh + 2 * pad;
+            if w > 80 && h > 32 {
+                let key = format!("{name}:menu");
+                let hash = hash_of(&(&shown, sel, &head, &count, w, h, t.name.clone(), scale));
+                let th = t.clone();
+                let buf = state.cached(key, w, h, hash, |cv| {
+                    cv.rect(0, 0, w, h, th.border_focus);
+                    cv.rect(1, 1, w - 2, h - 2, th.bg);
+                    cv.text(pad, pad, &head, th.accent, scale, w - pad);
+                    let cw = Canvas::text_width(&count, scale);
+                    cv.text(w - cw - pad, pad, &count, th.dim, scale, w);
+                    for (n, s) in shown.iter().enumerate() {
+                        let y = pad + (n as i32 + 2) * lh;
+                        let fg = if n == sel { th.sel_fg } else { th.fg };
+                        if n == sel {
+                            cv.rect(2, y, w - 4, lh, th.sel_bg);
+                        }
+                        cv.text(pad, y, s, fg, scale, w - pad);
+                    }
+                });
+                let (x, y) = ((geo.size.w - w) / 2, bh + (geo.size.h - h) / 6);
+                if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (x as f64, y as f64), &buf, None, None, None, Kind::Unspecified) {
+                    out.insert(0, e.into());
+                }
+            }
+        }
+    }
     out
 }
