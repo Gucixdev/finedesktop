@@ -78,6 +78,9 @@ pub struct Desktop {
     /// windows already announced: id -> (app_id, title)
     pub known: std::collections::HashMap<u32, (String, String)>,
     pub last_focus: Option<u32>,
+    pub panels: Vec<crate::components::engine::widget_engine::Panel>,
+    /// None: the panels show on empty workspaces; Some: forced on or off with `panel`
+    pub panel_show: Option<bool>,
     pub bar_cache: std::collections::HashMap<String, (u64, smithay::backend::renderer::element::memory::MemoryRenderBuffer)>,
     pub solid_ids: std::collections::HashMap<(String, usize), smithay::backend::renderer::element::Id>,
 }
@@ -111,7 +114,8 @@ impl Desktop {
 
         // Notify clients that we have a keyboard, for the sake of the example we assume that keyboard is always present.
         // You may want to track keyboard hot-plug in real compositor.
-        seat.add_keyboard(Default::default(), 200, 25).unwrap();
+        let config = Config::load();
+        seat.add_keyboard(Self::xkb(&config), 200, 25).unwrap();
 
         // Notify clients that we have a pointer (mouse)
         // Here we assume that there is always pointer plugged in
@@ -148,7 +152,7 @@ impl Desktop {
             data_device_state,
             popups,
             seat,
-            config: Config::load(),
+            config,
             mons: Vec::new(),
             focus_mon: 0,
             pointer_loc: (0.0, 0.0).into(),
@@ -158,6 +162,8 @@ impl Desktop {
             bar_dirty: true,
             known: Default::default(),
             last_focus: None,
+            panels: Vec::new(),
+            panel_show: None,
             bar_cache: Default::default(),
             solid_ids: Default::default(),
         }
@@ -296,8 +302,26 @@ impl Desktop {
         Some(r)
     }
 
+    /// Re-read the panels (key list, markdown files); redraw only when something changed.
+    pub fn reload_panels(&mut self) {
+        let p = crate::components::engine::widget_engine::load(&self.config);
+        if p != self.panels {
+            self.panels = p;
+            self.bar_dirty = true;
+        }
+    }
+
+    /// Panels are visible when forced on, or when automatic and monitor `mi` shows an empty workspace.
+    pub fn panel_visible(&self, mi: usize) -> bool {
+        if !self.config.panels || self.panels.is_empty() {
+            return false;
+        }
+        self.panel_show.unwrap_or_else(|| self.mons.get(mi).is_some_and(|m| m.ws[m.cur].clients.is_empty()))
+    }
+
     /// Tell the widget worker what the config wants (segments, interval, on/off) and redraw the bar.
     pub fn apply_widget_state(&mut self) {
+        self.reload_panels();
         self.widgets.configure(&self.config);
         self.bar_dirty = true;
         self.retile();
@@ -470,10 +494,25 @@ impl Desktop {
         }
     }
 
+    fn xkb(c: &Config) -> smithay::input::keyboard::XkbConfig<'_> {
+        smithay::input::keyboard::XkbConfig {
+            layout: &c.kb_layout,
+            options: (!c.kb_options.is_empty()).then(|| c.kb_options.clone()),
+            ..Default::default()
+        }
+    }
+
     pub fn load_config(&mut self) {
         self.config = Config::load();
+        if let Some(kb) = self.seat.get_keyboard() {
+            let cfg = self.config.clone();
+            if let Err(e) = kb.set_xkb_config(self, Self::xkb(&cfg)) {
+                tracing::warn!("xkb config: {e:?}");
+            }
+        }
         self.mode = None;
         self.widgets.configure(&self.config);
+        self.reload_panels();
         self.bar_dirty = true;
         self.emit(crate::components::hooks::Event::reload());
         let c = self.config.clone();
@@ -523,6 +562,17 @@ impl Desktop {
             Action::Emit(text) => {
                 let (name, rest) = text.split_once(' ').unwrap_or((text.as_str(), ""));
                 self.emit(crate::components::hooks::Event::user(name, rest));
+            }
+            Action::Panel(how) => {
+                match how.as_str() {
+                    "toggle" => self.panel_show = Some(!self.panel_visible(mi)),
+                    "show" | "on" => self.panel_show = Some(true),
+                    "hide" | "off" => self.panel_show = Some(false),
+                    "auto" => self.panel_show = None,
+                    "reload" => self.reload_panels(),
+                    _ => return "error: panel toggle|show|hide|auto|reload".into(),
+                }
+                self.bar_dirty = true;
             }
             Action::Bar(how) => {
                 use crate::config::BarPos;

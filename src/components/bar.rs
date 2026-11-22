@@ -95,7 +95,8 @@ impl Desktop {
                     out.push(it(format!("bat {p}%{}", if chg { "+" } else { "" }), if p <= 15 && !chg { t.urgent } else { t.fg }));
                 }
             }
-            "clock" => out.push(it(widgets::now("%a %d %b %H:%M"), t.accent)),
+            "date" => out.push(it(widgets::now("%Y-%m-%d %a"), t.fg)),
+            "clock" => out.push(it(widgets::now("%H:%M:%S"), t.accent)),
             other => {
                 if let Some(txt) = sh.text.get(other).filter(|s| !s.is_empty()) {
                     let (fg, txt) = match txt.split_once(' ') {
@@ -230,6 +231,25 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
         let y = if pos == BarPos::Top { 0 } else { geo.size.h - bh };
         if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (0.0, y as f64), &buf, None, None, None, Kind::Unspecified) {
             out.push(e.into());
+        }
+    }
+    // panels: key list and markdown widgets, on empty workspaces (or when forced with `panel show`)
+    if state.panel_visible(mi) {
+        let top = if pos == BarPos::Top { bh } else { 0 };
+        let bottom = if pos == BarPos::Bottom { bh } else { 0 };
+        let m = 16 * scale;
+        let (w, h) = (geo.size.w - 2 * m, geo.size.h - top - bottom - 2 * m);
+        if w > 80 && h > 32 {
+            let key = format!("{name}:panels");
+            let hash = hash_of(&(&state.panels, w, h, t.name.clone(), scale));
+            let (panels, th) = (state.panels.clone(), t.clone());
+            let buf = state.cached(key, w, h, hash, |cv| {
+                cv.rect(0, 0, w, h, th.bg);
+                super::engine::widget_engine::render(&panels, cv, &th, scale);
+            });
+            if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (m as f64, (top + m) as f64), &buf, None, None, None, Kind::Unspecified) {
+                out.push(e.into());
+            }
         }
     }
     out

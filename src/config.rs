@@ -58,6 +58,7 @@ pub enum Action {
     Emit(String),
     /// `bar toggle|top|bottom|off`
     Bar(String),
+    Panel(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +81,9 @@ pub struct Binding {
     pub mods: Mods,
     pub sym: u32,
     pub action: Action,
+    /// as typed, for the key panel: "Super+Return" and "spawn foot"
+    pub label: String,
+    pub act: String,
 }
 
 #[derive(Clone, Debug)]
@@ -105,9 +109,16 @@ pub struct Config {
     pub font_scale: i32,
     /// background widget scripts (`segment`s and widgets/ files) run; modes switch this off
     pub widgets: bool,
+    /// xkb layout list and options, e.g. `kb_layout = pl,gb` and `kb_options = grp:shifts_toggle`
+    pub kb_layout: String,
+    pub kb_options: String,
     /// shell commands a mode runs when it is entered / left (mode files only)
     pub enter: String,
     pub leave: String,
+    /// panels drawn on the desktop (key list + markdown files)
+    pub panels: bool,
+    pub panel_keys: bool,
+    pub panel_files: Vec<String>,
 }
 
 impl Default for Config {
@@ -132,8 +143,13 @@ impl Default for Config {
             bar_interval: 1,
             font_scale: 1,
             widgets: true,
+            kb_layout: String::new(),
+            kb_options: String::new(),
             enter: String::new(),
             leave: String::new(),
+            panels: true,
+            panel_keys: true,
+            panel_files: Vec::new(),
         }
     }
 }
@@ -177,6 +193,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "mode" if !rest.is_empty() => Action::Mode(rest.into()),
         "emit" if !rest.is_empty() => Action::Emit(rest.into()),
         "bar" if !rest.is_empty() => Action::Bar(rest.into()),
+        "panel" => Action::Panel(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "focus" => Action::Focus(parse_dir(rest)?),
         "layout" => match rest {
             "next" | "prev" => Action::Layout(LayoutSel::Dir(parse_dir(rest)?)),
@@ -263,6 +280,11 @@ impl Config {
             "bar_right" => self.bar_right = val.split_whitespace().map(String::from).collect(),
             "bar_interval" => self.bar_interval = n(val)?.clamp(1, 3600) as u64,
             "font_scale" => self.font_scale = n(val)?.clamp(1, 4),
+            "panels" => self.panels = matches!(val, "on" | "true" | "yes" | "1"),
+            "panel_keys" => self.panel_keys = matches!(val, "on" | "true" | "yes" | "1"),
+            "panel" => self.panel_files.push(val.into()),
+            "kb_layout" => self.kb_layout = val.into(),
+            "kb_options" => self.kb_options = val.into(),
             "widgets" => self.widgets = matches!(val, "on" | "true" | "yes" | "1"),
             "enter" => self.enter = val.into(),
             "leave" => self.leave = val.into(),
@@ -285,7 +307,14 @@ impl Config {
                 let act = act.replace("$terminal", &self.terminal.clone()).replace("$menu", &self.menu.clone());
                 let action = parse_action(&act)?;
                 self.binds.retain(|b| !(b.mods == mods && b.sym == sym));
-                self.binds.push(Binding { mods, sym, action });
+                let mut label: Vec<&str> = Vec::new();
+                for (on, n) in [(mods.logo, "Super"), (mods.ctrl, "Ctrl"), (mods.alt, "Alt"), (mods.shift, "Shift")] {
+                    if on {
+                        label.push(n);
+                    }
+                }
+                label.push(k);
+                self.binds.push(Binding { mods, sym, action, label: label.join("+"), act: act.clone() });
             }
             "unbind" => {
                 let (mods, k) = val.split_once(',').ok_or("unbind = MODS, key")?;
@@ -317,6 +346,11 @@ impl Config {
     /// Height of the status bar and of the tab/stack bars: one text row plus padding.
     pub fn bar_height(&self) -> i32 {
         16 * self.font_scale + 6
+    }
+
+    pub fn modkey_label(&self) -> &'static str {
+        let m = self.modkey;
+        if m.logo { "Super" } else if m.alt { "Alt" } else if m.ctrl { "Ctrl" } else { "Shift" }
     }
 
     pub fn set_theme(&mut self, name: &str) -> Result<(), String> {

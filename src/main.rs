@@ -37,6 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (mut last_min, mut tick) = (String::new(), 0u64);
         event_loop.handle().insert_source(Timer::from_duration(std::time::Duration::from_secs(1)), move |_, _, st| {
             tick += 1;
+            if tick % 3 == 0 {
+                st.reload_panels();
+            }
             if tick % st.config.bar_interval.max(1) == 0 {
                 st.bar_dirty = true;
             }

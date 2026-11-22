@@ -15,7 +15,7 @@ use std::{
 
 use crate::config::Config;
 
-pub const BUILTIN: [&str; 9] = ["tags", "layout", "title", "windows", "cpu", "ram", "vol", "bat", "clock"];
+pub const BUILTIN: [&str; 10] = ["tags", "layout", "title", "windows", "cpu", "ram", "vol", "bat", "date", "clock"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
