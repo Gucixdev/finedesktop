@@ -32,16 +32,13 @@ impl CompositorHandler for Desktop {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = self
-                .space
-                .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == &root)
-            {
+            if let Some(window) = self.find_window(&root).and_then(|l| self.window_at(l)) {
                 window.on_commit();
             }
         };
 
-        xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
+        let window = self.find_window(surface).and_then(|l| self.window_at(l).cloned());
+        xdg_shell::handle_commit(&mut self.popups, window, surface);
         resize_grab::handle_commit(&mut self.space, surface);
     }
 }

@@ -1,5 +1,9 @@
 use std::{ffi::OsString, sync::Arc};
 
+use crate::components::engine::layout_engine::{Bar, Layout, Params, Rect, arrange};
+use crate::config::{Action, Config, Dir, LayoutSel, WsSel};
+use smithay::output::Output;
+
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
@@ -22,6 +26,21 @@ use smithay::{
     },
 };
 
+pub struct Workspace {
+    pub clients: Vec<Window>,
+    pub focus: usize,
+    pub layout: Layout,
+    pub params: Params,
+}
+
+pub struct Mon {
+    pub output: Output,
+    pub ws: Vec<Workspace>,
+    pub cur: usize,
+    /// Tab / stack bar of the last plan for the current workspace.
+    pub bar: Option<Bar>,
+}
+
 pub struct Desktop {
     pub start_time: std::time::Instant,
     pub socket_name: OsString,
@@ -33,6 +52,7 @@ pub struct Desktop {
     // Smithay State
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Desktop>,
@@ -41,13 +61,10 @@ pub struct Desktop {
 
     pub seat: Seat<Self>,
 
-    /// Tiling order, index 0 is the first master.
-    pub clients: Vec<Window>,
-    pub layout: crate::components::engine::layout_engine::Layout,
-    pub params: crate::components::engine::layout_engine::Params,
-    /// Tab / stack title bar of the last plan (drawing it is still TODO).
-    pub bar: Option<crate::components::engine::layout_engine::Bar>,
-    pub modkey: crate::keys::Mod,
+    pub config: Config,
+    pub mons: Vec<Mon>,
+    pub focus_mon: usize,
+    pub pointer_loc: Point<f64, Logical>,
 }
 
 impl Desktop {
@@ -63,6 +80,7 @@ impl Desktop {
         // Initialize protocols needed for displaying windows
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let xdg_decoration_state = smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let popups = PopupManager::default();
 
@@ -106,17 +124,17 @@ impl Desktop {
 
             compositor_state,
             xdg_shell_state,
+            xdg_decoration_state,
             shm_state,
             output_manager_state,
             seat_state,
             data_device_state,
             popups,
             seat,
-            clients: Vec::new(),
-            layout: crate::components::engine::layout_engine::Layout::Tile,
-            params: Default::default(),
-            bar: None,
-            modkey: crate::keys::Mod::from_env(),
+            config: Config::load(),
+            mons: Vec::new(),
+            focus_mon: 0,
+            pointer_loc: (0.0, 0.0).into(),
         }
     }
 
@@ -180,65 +198,342 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
+
+/// Where a window lives: (monitor, workspace, index in the workspace's client list).
+pub type Loc = (usize, usize, usize);
+
 impl Desktop {
-    /// Run the layout engine for the first output and apply the plan to the clients.
+    pub fn new_workspace(&self) -> Workspace {
+        let c = &self.config;
+        Workspace {
+            clients: Vec::new(),
+            focus: 0,
+            layout: c.layout,
+            params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_h },
+        }
+    }
+
+    /// Register an output: map it right of the existing ones and give it its workspaces.
+    pub fn add_output(&mut self, output: Output) {
+        let x: i32 = self.mons.iter().filter_map(|m| self.space.output_geometry(&m.output)).map(|g| g.size.w).sum();
+        self.space.map_output(&output, (x, 0));
+        let ws = (0..self.config.workspaces).map(|_| self.new_workspace()).collect();
+        self.mons.push(Mon { output, ws, cur: 0, bar: None });
+    }
+
+    pub fn mon_by_output(&self, o: &Output) -> Option<usize> {
+        self.mons.iter().position(|m| m.output == *o)
+    }
+
+    pub fn find_window(&self, surface: &WlSurface) -> Option<Loc> {
+        for (mi, m) in self.mons.iter().enumerate() {
+            for (wi, w) in m.ws.iter().enumerate() {
+                if let Some(ci) = w.clients.iter().position(|c| c.toplevel().is_some_and(|t| t.wl_surface() == surface)) {
+                    return Some((mi, wi, ci));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn window_at(&self, loc: Loc) -> Option<&Window> {
+        self.mons.get(loc.0)?.ws.get(loc.1)?.clients.get(loc.2)
+    }
+
+    /// Focused window of the focused monitor's current workspace.
+    pub fn focused(&self) -> Option<(Loc, &Window)> {
+        let m = self.mons.get(self.focus_mon)?;
+        let ws = &m.ws[m.cur];
+        let w = ws.clients.get(ws.focus)?;
+        Some(((self.focus_mon, m.cur, ws.focus), w))
+    }
+
+    /// Output area minus layer-shell exclusive zones (bars), in global coordinates.
+    pub fn usable_area(&self, mi: usize) -> Option<Rect> {
+        let output = &self.mons.get(mi)?.output;
+        let geo = self.space.output_geometry(output)?;
+        let zone = smithay::desktop::layer_map_for_output(output).non_exclusive_zone();
+        Some(Rect { x: geo.loc.x + zone.loc.x, y: geo.loc.y + zone.loc.y, w: zone.size.w, h: zone.size.h })
+    }
+
+    /// Drop dead windows, run the layout engine on every monitor and apply the plans.
     pub fn retile(&mut self) {
-        use crate::components::engine::layout_engine::{Rect, arrange};
         use smithay::utils::IsAlive;
-        self.clients.retain(|w| w.alive());
-        let Some(output) = self.space.outputs().next().cloned() else { return };
-        let Some(geo) = self.space.output_geometry(&output) else { return };
-        let area = Rect { x: geo.loc.x, y: geo.loc.y, w: geo.size.w, h: geo.size.h };
-        let focused = self.focused_index().unwrap_or(0);
-        let plan = arrange(self.layout, area, self.clients.len(), focused, &self.params);
-        self.bar = plan.bar;
-        for (win, slot) in self.clients.clone().into_iter().zip(plan.slots) {
-            let Some(slot) = slot else {
-                // float: let the client pick its size, keep it mapped where it is
+        for mi in 0..self.mons.len() {
+            for ws in &mut self.mons[mi].ws {
+                let focused = ws.clients.get(ws.focus).cloned();
+                ws.clients.retain(|w| w.alive());
+                ws.focus = focused
+                    .and_then(|f| ws.clients.iter().position(|c| *c == f))
+                    .unwrap_or(ws.focus.min(ws.clients.len().saturating_sub(1)));
+            }
+            let Some(area) = self.usable_area(mi) else { continue };
+            let cur = self.mons[mi].cur;
+            // hide the other workspaces
+            let hidden: Vec<Window> = self.mons[mi]
+                .ws
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != cur)
+                .flat_map(|(_, w)| w.clients.clone())
+                .collect();
+            for w in hidden {
+                self.space.unmap_elem(&w);
+            }
+            let ws = &self.mons[mi].ws[cur];
+            let plan = arrange(ws.layout, area, ws.clients.len(), ws.focus, &ws.params);
+            let clients = ws.clients.clone();
+            let focus = ws.focus;
+            self.mons[mi].bar = plan.bar;
+            for (ci, (win, slot)) in clients.into_iter().zip(plan.slots).enumerate() {
+                let active = mi == self.focus_mon && ci == focus;
+                win.set_activated(active);
+                let Some(slot) = slot else {
+                    // float: client picks its size, stays where it is
+                    if let Some(top) = win.toplevel() {
+                        top.with_pending_state(|st| {
+                            st.size = None;
+                            set_tiled(st, false);
+                        });
+                        top.send_pending_configure();
+                    }
+                    if self.space.element_location(&win).is_none() {
+                        let (ax, ay) = (area.x + 40 + 24 * ci as i32, area.y + 40 + 24 * ci as i32);
+                        self.space.map_element(win, (ax, ay), false);
+                    }
+                    continue;
+                };
+                if !slot.visible {
+                    self.space.unmap_elem(&win);
+                    continue;
+                }
                 if let Some(top) = win.toplevel() {
-                    top.with_pending_state(|st| st.size = None);
+                    let size = (slot.rect.w, slot.rect.h).into();
+                    top.with_pending_state(|st| {
+                        st.size = Some(size);
+                        set_tiled(st, true);
+                    });
                     top.send_pending_configure();
                 }
-                if self.space.element_location(&win).is_none() {
-                    self.space.map_element(win, (40, 40), false);
+                if self.space.element_location(&win) != Some((slot.rect.x, slot.rect.y).into()) {
+                    self.space.map_element(win, (slot.rect.x, slot.rect.y), false);
                 }
-                continue;
-            };
-            if !slot.visible {
-                self.space.unmap_elem(&win);
-                continue;
-            }
-            if let Some(top) = win.toplevel() {
-                let size = (slot.rect.w, slot.rect.h).into();
-                top.with_pending_state(|st| st.size = Some(size));
-                top.send_pending_configure();
-            }
-            if self.space.element_location(&win) != Some((slot.rect.x, slot.rect.y).into()) {
-                self.space.map_element(win, (slot.rect.x, slot.rect.y), false);
             }
         }
     }
 
-    pub fn set_layout(&mut self, layout: crate::components::engine::layout_engine::Layout) {
-        tracing::info!("layout: {}", layout.name());
-        self.layout = layout;
+    /// Give keyboard focus to the focused window (or nobody) and re-run the layouts.
+    pub fn refocus(&mut self) {
         self.retile();
-    }
-
-    pub fn focused_index(&self) -> Option<usize> {
-        let focus = self.seat.get_keyboard()?.current_focus()?;
-        self.clients.iter().position(|w| w.toplevel().is_some_and(|t| *t.wl_surface() == focus))
-    }
-
-    pub fn focus_index(&mut self, i: usize) {
-        let Some(win) = self.clients.get(i).cloned() else { return };
+        let surf = self.focused().and_then(|(_, w)| w.toplevel().map(|t| t.wl_surface().clone()));
+        if let Some(w) = self.focused().map(|(_, w)| w.clone()) {
+            self.space.raise_element(&w, false);
+        }
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        let surf = win.toplevel().map(|t| t.wl_surface().clone());
-        self.space.raise_element(&win, true);
         if let Some(kb) = self.seat.get_keyboard() {
             kb.set_focus(self, surf, serial);
         }
-        // hiding layouts (monocle/deck/tab/stack) depend on who is focused
-        self.retile();
+    }
+
+    pub fn focus_loc(&mut self, loc: Loc) {
+        let (mi, wi, ci) = loc;
+        if self.window_at(loc).is_none() {
+            return;
+        }
+        self.focus_mon = mi;
+        self.mons[mi].cur = wi;
+        self.mons[mi].ws[wi].focus = ci;
+        self.refocus();
+    }
+
+    pub fn add_window(&mut self, win: Window) {
+        let mi = self.focus_mon.min(self.mons.len().saturating_sub(1));
+        let Some(m) = self.mons.get_mut(mi) else { return };
+        let cur = m.cur;
+        m.ws[cur].clients.insert(0, win);
+        m.ws[cur].focus = 0;
+        self.refocus();
+    }
+
+    pub fn remove_dead(&mut self) {
+        self.refocus();
+    }
+
+    fn step(i: usize, n: usize, d: Dir) -> usize {
+        match d {
+            Dir::Next => (i + 1) % n,
+            Dir::Prev => (i + n - 1) % n,
+        }
+    }
+
+    fn ws_target(&self, mi: usize, sel: WsSel) -> usize {
+        let m = &self.mons[mi];
+        match sel {
+            WsSel::N(n) => (n - 1).min(m.ws.len() - 1),
+            WsSel::Dir(d) => Self::step(m.cur, m.ws.len(), d),
+        }
+    }
+
+    pub fn load_config(&mut self) {
+        self.config = Config::load();
+        let c = self.config.clone();
+        for m in &mut self.mons {
+            while m.ws.len() < c.workspaces {
+                m.ws.push(Workspace {
+                    clients: Vec::new(),
+                    focus: 0,
+                    layout: c.layout,
+                    params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_h },
+                });
+            }
+            for ws in &mut m.ws {
+                ws.params.gap = c.gap;
+                ws.params.bar_h = c.bar_h;
+            }
+        }
+        self.refocus();
+    }
+
+    pub fn run_action(&mut self, a: Action) -> String {
+        let n_mon = self.mons.len();
+        if n_mon == 0 {
+            return "error: no output".into();
+        }
+        let mi = self.focus_mon.min(n_mon - 1);
+        let cur = self.mons[mi].cur;
+        match a {
+            Action::Spawn(cmd) => crate::keys::spawn(&cmd),
+            Action::Close => {
+                if let Some(t) = self.focused().and_then(|(_, w)| w.toplevel()) {
+                    t.send_close();
+                }
+            }
+            Action::Quit => self.loop_signal.stop(),
+            Action::Reload => {
+                self.load_config();
+            }
+            Action::State => return self.report(),
+            Action::Focus(d) => {
+                let n = self.mons[mi].ws[cur].clients.len();
+                if n > 0 {
+                    let f = self.mons[mi].ws[cur].focus;
+                    self.mons[mi].ws[cur].focus = Self::step(f, n, d);
+                    self.refocus();
+                }
+            }
+            Action::Zoom => {
+                let ws = &mut self.mons[mi].ws[cur];
+                if ws.focus > 0 && ws.focus < ws.clients.len() {
+                    let w = ws.clients.remove(ws.focus);
+                    ws.clients.insert(0, w);
+                    ws.focus = 0;
+                    self.refocus();
+                }
+            }
+            Action::Layout(sel) => {
+                let ws = &mut self.mons[mi].ws[cur];
+                ws.layout = match sel {
+                    LayoutSel::Set(l) => l,
+                    LayoutSel::Dir(Dir::Next) => ws.layout.next(),
+                    LayoutSel::Dir(Dir::Prev) => ws.layout.prev(),
+                };
+                self.refocus();
+            }
+            Action::Mfact(d) => {
+                let p = &mut self.mons[mi].ws[cur].params;
+                p.mfact = (p.mfact + d).clamp(0.1, 0.9);
+                self.retile();
+            }
+            Action::Nmaster(d) => {
+                let p = &mut self.mons[mi].ws[cur].params;
+                p.nmaster = (p.nmaster as i32 + d).max(0) as usize;
+                self.retile();
+            }
+            Action::View(sel) => {
+                let t = self.ws_target(mi, sel);
+                self.mons[mi].cur = t;
+                self.refocus();
+            }
+            Action::Tag(sel) => {
+                let t = self.ws_target(mi, sel);
+                let ws = &mut self.mons[mi].ws;
+                if t != cur && ws[cur].focus < ws[cur].clients.len() {
+                    let f = ws[cur].focus;
+                    let w = ws[cur].clients.remove(f);
+                    ws[cur].focus = f.min(ws[cur].clients.len().saturating_sub(1));
+                    ws[t].clients.insert(0, w);
+                    ws[t].focus = 0;
+                    self.refocus();
+                }
+            }
+            Action::FocusMon(d) => {
+                self.focus_mon = Self::step(mi, n_mon, d);
+                self.refocus();
+            }
+            Action::SendMon(d) => {
+                let to = Self::step(mi, n_mon, d);
+                let ws = &mut self.mons[mi].ws[cur];
+                if to != mi && ws.focus < ws.clients.len() {
+                    let f = ws.focus;
+                    let w = ws.clients.remove(f);
+                    ws.focus = f.min(ws.clients.len().saturating_sub(1));
+                    let tc = self.mons[to].cur;
+                    self.mons[to].ws[tc].clients.insert(0, w);
+                    self.mons[to].ws[tc].focus = 0;
+                    self.focus_mon = to;
+                    self.refocus();
+                }
+            }
+        }
+        "ok".into()
+    }
+
+    /// Human and machine readable snapshot, used by `finedesktop ctl state` and the tests.
+    pub fn report(&self) -> String {
+        let mut out = String::new();
+        for (mi, m) in self.mons.iter().enumerate() {
+            let g = self.space.output_geometry(&m.output).unwrap_or_default();
+            let ws = &m.ws[m.cur];
+            out += &format!(
+                "monitor {mi}{} {} {}x{}@{},{} ws {}/{} layout {} mfact {:.2} nmaster {}\n",
+                if mi == self.focus_mon { "*" } else { "" },
+                m.output.name(), g.size.w, g.size.h, g.loc.x, g.loc.y,
+                m.cur + 1, m.ws.len(), ws.layout.name(), ws.params.mfact, ws.params.nmaster,
+            );
+            for (wi, w) in m.ws.iter().enumerate() {
+                for (ci, c) in w.clients.iter().enumerate() {
+                    let title = c.toplevel().map(|t| {
+                        smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+                            s.data_map
+                                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                                .and_then(|d| d.lock().ok().and_then(|d| d.title.clone()))
+                                .unwrap_or_default()
+                        })
+                    });
+                    let geo = self.space.element_geometry(c);
+                    out += &format!(
+                        "  ws{} #{ci}{} {:?} {}\n",
+                        wi + 1,
+                        if wi == m.cur && ci == w.focus && mi == self.focus_mon { "*" } else { "" },
+                        title.unwrap_or_default(),
+                        match geo { Some(g) => format!("{}x{}@{},{}", g.size.w, g.size.h, g.loc.x, g.loc.y), None => "hidden".into() },
+                    );
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Tiled windows get the Tiled* states so clients stop snapping to their own size increments
+/// (foot's cell grid) and drop shadows/rounded corners.
+fn set_tiled(st: &mut smithay::wayland::shell::xdg::ToplevelState, on: bool) {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::*;
+    for s in [TiledLeft, TiledRight, TiledTop, TiledBottom] {
+        if on {
+            st.states.set(s);
+        } else {
+            st.states.unset(s);
+        }
     }
 }

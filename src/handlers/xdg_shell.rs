@@ -1,5 +1,5 @@
 use smithay::{
-    desktop::{PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords},
+    desktop::{PopupKind, PopupManager, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{
         Seat,
         pointer::{Focus, GrabStartData as PointerGrabStartData},
@@ -33,10 +33,11 @@ impl XdgShellHandler for Desktop {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = Window::new_wayland_window(surface);
-        self.clients.insert(0, window.clone());
-        self.space.map_element(window, (0, 0), false);
-        self.retile();
-        self.focus_index(0);
+        self.add_window(window);
+    }
+
+    fn toplevel_destroyed(&mut self, _surface: ToplevelSurface) {
+        self.remove_dead();
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -62,13 +63,16 @@ impl XdgShellHandler for Desktop {
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
 
-            let window = self
+            // only windows that are mapped (visible) can be moved/resized by the client
+            let Some(window) = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+                .find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == wl_surface))
+                .cloned()
+            else {
+                return;
+            };
+            let Some(initial_window_location) = self.space.element_location(&window) else { return };
 
             let grab = MoveSurfaceGrab {
                 start_data,
@@ -94,13 +98,16 @@ impl XdgShellHandler for Desktop {
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
 
-            let window = self
+            // only windows that are mapped (visible) can be moved/resized by the client
+            let Some(window) = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+                .find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == wl_surface))
+                .cloned()
+            else {
+                return;
+            };
+            let Some(initial_window_location) = self.space.element_location(&window) else { return };
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {
@@ -149,13 +156,9 @@ fn check_grab(
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
+pub fn handle_commit(popups: &mut PopupManager, window: Option<Window>, surface: &WlSurface) {
     // Handle toplevel commits.
-    if let Some(window) = space
-        .elements()
-        .find(|w| w.toplevel().unwrap().wl_surface() == surface)
-        .cloned()
-    {
+    if let Some(window) = window {
         let initial_configure_sent = with_states(surface, |states| {
             states
                 .data_map
@@ -200,9 +203,9 @@ impl Desktop {
             return;
         };
 
-        let output = self.space.outputs().next().unwrap();
-        let output_geo = self.space.output_geometry(output).unwrap();
-        let window_geo = self.space.element_geometry(window).unwrap();
+        let Some(output) = self.space.outputs().next() else { return };
+        let Some(output_geo) = self.space.output_geometry(output) else { return };
+        let Some(window_geo) = self.space.element_geometry(window) else { return };
 
         // The target geometry for the positioner should be relative to its parent's geometry, so
         // we will compute that here.
@@ -213,5 +216,27 @@ impl Desktop {
         popup.with_pending_state(|state| {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });
+    }
+}
+
+// No client-side decorations: we draw none (0 borders, 0 gaps), clients must not either.
+impl smithay::wayland::shell::xdg::decoration::XdgDecorationHandler for Desktop {
+    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        server_side(&toplevel);
+    }
+    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode) {
+        server_side(&toplevel);
+    }
+    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+        server_side(&toplevel);
+    }
+    fn decoration_destroyed(&mut self, _toplevel: ToplevelSurface) {}
+}
+
+fn server_side(toplevel: &ToplevelSurface) {
+    use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
+    toplevel.with_pending_state(|st| st.decoration_mode = Some(Mode::ServerSide));
+    if toplevel.is_initial_configure_sent() {
+        toplevel.send_pending_configure();
     }
 }

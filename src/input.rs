@@ -20,21 +20,19 @@ impl Desktop {
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time(&event);
 
-                let modkey = self.modkey;
-                let action = self.seat.get_keyboard().unwrap().input::<crate::keys::Action, _>(
+                let action = self.seat.get_keyboard().unwrap().input::<crate::config::Action, _>(
                     self,
                     event.key_code(),
                     event.state(),
                     serial,
                     time,
-                    |_, mods, handle| {
+                    |state, mods, handle| {
                         if event.state() != KeyState::Pressed {
                             return FilterResult::Forward;
                         }
-                        let sym = handle.modified_sym().raw();
-                        // key releases of an intercepted press are forwarded; harmless for compositor keys
-                        match crate::keys::lookup(modkey, mods, sym) {
-                            Some(a) => FilterResult::Intercept(a),
+                        let sym = handle.raw_latin_sym_or_raw_current_sym().map_or(0, |s| s.raw());
+                        match state.config.find(crate::keys::mods_of(mods), sym) {
+                            Some(a) => FilterResult::Intercept(a.clone()),
                             None => FilterResult::Forward,
                         }
                     },
@@ -43,30 +41,16 @@ impl Desktop {
                     self.run_action(a);
                 }
             }
-            InputEvent::PointerMotion { .. } => {}
+            InputEvent::PointerMotion { event, .. } => {
+                use smithay::backend::input::PointerMotionEvent;
+                let pos = self.clamp_to_outputs(self.pointer_loc + event.delta());
+                self.move_pointer(pos, event.time());
+            }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
-
-                let output_geo = self.space.output_geometry(output).unwrap();
-
-                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
-
-                let serial = SERIAL_COUNTER.next_serial();
-
-                let pointer = self.seat.get_pointer().unwrap();
-
-                let under = self.surface_under(pos);
-
-                pointer.motion(
-                    self,
-                    under,
-                    &MotionEvent {
-                        location: pos,
-                        serial,
-                        time: event.time(),
-                    },
-                );
-                pointer.frame(self);
+                let Some(output) = self.mons.get(self.focus_mon).map(|m| m.output.clone()) else { return };
+                let Some(geo) = self.space.output_geometry(&output) else { return };
+                let pos = event.position_transformed(geo.size) + geo.loc.to_f64();
+                self.move_pointer(pos, event.time());
             }
             InputEvent::PointerButton { event, .. } => {
                 let pointer = self.seat.get_pointer().unwrap();
@@ -79,26 +63,14 @@ impl Desktop {
                 let button_state = event.state();
 
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-                    if let Some((window, _loc)) = self
+                    let hit = self
                         .space
                         .element_under(pointer.current_location())
-                        .map(|(w, l)| (w.clone(), l))
-                    {
-                        self.space.raise_element(&window, true);
-                        keyboard.set_focus(
-                            self,
-                            Some(window.toplevel().unwrap().wl_surface().clone()),
-                            serial,
-                        );
-                        self.space.elements().for_each(|window| {
-                            window.toplevel().unwrap().send_pending_configure();
-                        });
-                    } else {
-                        self.space.elements().for_each(|window| {
-                            window.set_activated(false);
-                            window.toplevel().unwrap().send_pending_configure();
-                        });
-                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                        .and_then(|(w, _)| w.toplevel().map(|t| t.wl_surface().clone()))
+                        .and_then(|s| self.find_window(&s));
+                    match hit {
+                        Some(loc) => self.focus_loc(loc),
+                        None => keyboard.set_focus(self, Option::<WlSurface>::None, serial),
                     }
                 };
 
@@ -158,41 +130,23 @@ impl Desktop {
 }
 
 impl Desktop {
-    pub fn run_action(&mut self, a: crate::keys::Action) {
-        use crate::keys::Action::*;
-        let n = self.clients.len();
-        let cur = self.focused_index();
-        match a {
-            Spawn(cmd) => crate::keys::spawn(&cmd),
-            Close => {
-                if let Some(t) = cur.and_then(|i| self.clients[i].toplevel()) {
-                    t.send_close();
-                }
+    pub fn clamp_to_outputs(&self, p: smithay::utils::Point<f64, smithay::utils::Logical>) -> smithay::utils::Point<f64, smithay::utils::Logical> {
+        let (mut w, mut h) = (0.0f64, 0.0f64);
+        for m in &self.mons {
+            if let Some(g) = self.space.output_geometry(&m.output) {
+                w = w.max((g.loc.x + g.size.w) as f64);
+                h = h.max((g.loc.y + g.size.h) as f64);
             }
-            Quit => self.loop_signal.stop(),
-            FocusNext if n > 0 => self.focus_index(cur.map_or(0, |i| (i + 1) % n)),
-            FocusPrev if n > 0 => self.focus_index(cur.map_or(0, |i| (i + n - 1) % n)),
-            Zoom => {
-                if let Some(i) = cur.filter(|&i| i > 0) {
-                    let w = self.clients.remove(i);
-                    self.clients.insert(0, w);
-                    self.focus_index(0);
-                }
-            }
-            SetLayout(l) => self.set_layout(l),
-            CycleLayout(fwd) => {
-                let l = if fwd { self.layout.next() } else { self.layout.prev() };
-                self.set_layout(l);
-            }
-            Mfact(d) => {
-                self.params.mfact = (self.params.mfact + d).clamp(0.1, 0.9);
-                self.retile();
-            }
-            Nmaster(d) => {
-                self.params.nmaster = (self.params.nmaster as i32 + d).max(0) as usize;
-                self.retile();
-            }
-            FocusNext | FocusPrev => {}
         }
+        (p.x.clamp(0.0, (w - 1.0).max(0.0)), p.y.clamp(0.0, (h - 1.0).max(0.0))).into()
+    }
+
+    pub fn move_pointer(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>, time: smithay::backend::input::InputTime) {
+        self.pointer_loc = pos;
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.seat.get_pointer().unwrap();
+        let under = self.surface_under(pos);
+        pointer.motion(self, under, &MotionEvent { location: pos, serial, time });
+        pointer.frame(self);
     }
 }

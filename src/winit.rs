@@ -39,7 +39,7 @@ pub fn init_winit(
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
 
-    state.space.map_output(&output, (0, 0));
+    state.add_output(output.clone());
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
@@ -55,10 +55,10 @@ pub fn init_winit(
                     None,
                     None,
                 );
+                state.retile();
             }
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
-                state.retile();
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
 
@@ -78,7 +78,7 @@ pub fn init_winit(
                         [&state.space],
                         &[],
                         &mut damage_tracker,
-                        [0.1, 0.1, 0.1, 1.0],
+                        state.config.background,
                     )
                     .unwrap();
                 }

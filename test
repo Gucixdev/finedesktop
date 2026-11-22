@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# End-to-end test: nested compositor + real foot clients, driven through the control socket.
+# Needs a running host Wayland session. Usage: ./test   (runs `cargo test` first)
+set -u
+cd "$(dirname "$0")"
+cargo test -q 2>&1 | tail -3 || exit 1
+cargo build -q 2>&1 | grep -E '^error' && exit 1
+
+bin=$PWD/target/debug/finedesktop
+log=$(mktemp -d)
+fail=0
+ok()  { echo "ok   $1"; }
+bad() { echo "FAIL $1"; fail=1; }
+
+"$bin" >"$log/c.log" 2>&1 &
+cpid=$!
+trap 'kill $cpid 2>/dev/null; wait $cpid 2>/dev/null' EXIT
+
+for _ in $(seq 50); do
+  sock=$(ls -t "${XDG_RUNTIME_DIR:-/tmp}"/finedesktop-*.sock 2>/dev/null | head -1)
+  [ -n "${sock:-}" ] && [ -S "$sock" ] && break
+  sleep 0.1
+done
+export FD_SOCK=$sock
+ctl() { "$bin" ctl "$@"; }
+wait_clients() { # want_count
+  for _ in $(seq 60); do
+    n=$(ctl state | grep -c '^  ws')
+    [ "$n" = "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+geo() { ctl state | grep "^  ws$1 #$2" | grep -o '[0-9]*x[0-9]*@[0-9-]*,[0-9-]*\|hidden'; }
+
+[ "$(ctl state | head -1 | grep -c monitor)" = 1 ] && ok "state reports a monitor" || bad "no monitor"
+out=$(ctl state | head -1); W=$(echo "$out" | sed -E 's/.* ([0-9]+)x[0-9]+@.*/\1/')
+
+for i in 1 2 3; do ctl spawn foot -e sleep 60 >/dev/null; sleep 0.4; done
+wait_clients 3 && ok "3 clients mapped" || bad "clients did not map"
+
+ctl layout tile >/dev/null; sleep 0.3
+g0=$(geo 1 0); mw=${g0%%x*}
+[ "$mw" = "$((W * 55 / 100))" ] && ok "tile: master is 55% ($mw of $W)" || bad "tile master width $mw of $W"
+
+ctl mfact +0.1 >/dev/null; sleep 0.3
+g0=$(geo 1 0); mw=${g0%%x*}
+[ "$mw" = "$((W * 65 / 100))" ] && ok "mfact +0.1 -> $mw" || bad "mfact gave $mw"
+
+ctl layout monocle >/dev/null; sleep 0.3
+hid=$(ctl state | grep -c 'hidden')
+[ "$hid" = 2 ] && ok "monocle hides 2 of 3" || bad "monocle hidden=$hid"
+
+ctl layout grid >/dev/null; sleep 0.3
+hid=$(ctl state | grep -c 'hidden')
+[ "$hid" = 0 ] && ok "grid shows all" || bad "grid hidden=$hid"
+
+ctl layout float >/dev/null; sleep 0.3
+ctl state | grep '^  ws' | grep -q hidden && bad "float hides windows" || ok "float shows all"
+
+ctl layout tile >/dev/null
+ctl view 2 >/dev/null; sleep 0.3
+ctl state | head -1 | grep -q 'ws 2/9' && ok "view 2" || bad "view 2"
+[ "$(ctl state | grep -c hidden)" = 3 ] && ok "ws1 clients hidden on ws2" || bad "ws1 clients visible on ws2"
+ctl spawn foot -e sleep 60 >/dev/null; wait_clients 4 && ok "client on ws2" || bad "ws2 client"
+ctl view 1 >/dev/null; sleep 0.3
+ctl state | grep -q '^  ws2 #0.* hidden' && ok "ws2 client hidden on ws1" || bad "ws2 client not hidden"
+
+ctl tag 3 >/dev/null; sleep 0.3
+ctl state | grep -q '^  ws3 #0' && ok "tag 3 moved focused window" || bad "tag 3"
+
+ctl focus next >/dev/null; ctl close >/dev/null
+for _ in $(seq 30); do [ "$(ctl state | grep -c '^  ws')" = 3 ] && break; sleep 0.1; done
+[ "$(ctl state | grep -c '^  ws')" = 3 ] && ok "close removed a client" || bad "close"
+
+ctl bogus >/dev/null 2>&1 && bad "bogus action accepted" || ok "bogus action rejected"
+ctl layout nope 2>&1 | grep -q '^error' && ok "bad layout rejected" || bad "bad layout accepted"
+
+ctl quit >/dev/null; sleep 0.5
+kill -0 $cpid 2>/dev/null && bad "quit did not stop" || ok "quit stops the compositor"
+trap - EXIT
+[ $fail = 0 ] && echo "ALL OK" || { echo "FAILED (logs: $log)"; exit 1; }

@@ -4,6 +4,8 @@ mod handlers;
 
 mod grabs;
 mod input;
+mod config;
+mod ipc;
 mod keys;
 mod components;
 mod state;
@@ -13,28 +15,35 @@ use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 pub use state::Desktop;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("ctl") {
+        std::process::exit(ipc::ctl(&args[1..]));
+    }
     init_logging();
 
     let mut event_loop: EventLoop<Desktop> = EventLoop::try_new()?;
-
     let display: Display<Desktop> = Display::new()?;
-
     let mut state = Desktop::new(&mut event_loop, display);
 
     // Open a Wayland/X11 window for our nested compositor
     crate::winit::init_winit(&mut event_loop, &mut state)?;
 
-    // Set WAYLAND_DISPLAY to our socket name, so child processes connect to Desktop rather
-    // than the host compositor
+    // Children (autostart, spawned apps) must talk to us, not to the host compositor
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &state.socket_name) };
+    let sock = ipc::init(&event_loop.handle(), &state.socket_name.to_string_lossy())?;
+    unsafe { std::env::set_var("FD_SOCK", &sock) };
 
-    // Spawn a test client, that will run under Desktop
-    spawn_client();
+    for cmd in state.config.exec.clone() {
+        keys::spawn(&cmd);
+    }
+    if let [flag, command, ..] = args.as_slice() {
+        if flag == "-c" || flag == "--command" {
+            keys::spawn(command);
+        }
+    }
 
-    event_loop.run(None, &mut state, move |_| {
-        // Desktop is running
-    })?;
-
+    event_loop.run(None, &mut state, move |_| {})?;
+    let _ = std::fs::remove_file(sock);
     Ok(())
 }
 
@@ -43,20 +52,5 @@ fn init_logging() {
         tracing_subscriber::fmt().with_env_filter(env_filter).init();
     } else {
         tracing_subscriber::fmt().init();
-    }
-}
-
-fn spawn_client() {
-    let mut args = std::env::args().skip(1);
-    let flag = args.next();
-    let arg = args.next();
-
-    match (flag.as_deref(), arg) {
-        (Some("-c") | Some("--command"), Some(command)) => {
-            crate::keys::spawn(&command);
-        }
-        _ => {
-            crate::keys::spawn(&crate::keys::terminal());
-        }
     }
 }

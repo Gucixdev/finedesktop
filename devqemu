@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# devqemu - run finedesktop in a QEMU window (DRM/virtio-gpu), not nested in the host compositor.
+# The guest boots THIS machine's kernel and rootfs (read-only, over 9p) plus the repo's parent
+# dir, so there is no image to download, install or keep in sync.
+#
+#   ./devqemu            window, desktop mode (builds first)
+#   ./devqemu shell      window + serial shell on this terminal
+#   ./devqemu diag       headless, prints devices and powers off
+#   ./devqemu headless   no window, serial log in .devqemu/serial.log
+#   ./devqemu shot [f]   screenshot of the running VM to f (default .devqemu/shot.ppm)
+#   ./devqemu kill       stop the VM
+#   ./devqemu initrd     rebuild the initramfs (automatic when the kernel changes)
+# env: KVER (kernel), MEM (default 3G), RES (default 1280x720)
+set -euo pipefail
+repo=$(cd "$(dirname "$0")" && pwd); work=$repo/.devqemu; mkdir -p "$work"
+kver=${KVER:-$(uname -r)}; mem=${MEM:-3G}; res=${RES:-1280x720}
+share=$(dirname "$repo"); rel=/mnt/$(basename "$repo")
+
+initrd() {
+  local w=$work/initrd.d mods="" f path
+  rm -rf "$w"; mkdir -p "$w"/{bin,proc,sys,dev,newroot,usr/lib/modules,lib64}
+  ln -s usr/lib "$w/lib"
+  cp /usr/lib/initcpio/busybox "$w/bin/busybox"
+  for a in sh cat; do ln -sf busybox "$w/bin/$a"; done
+  # the initcpio busybox has no mount/insmod/switch_root: take util-linux + kmod from the host
+  cp -L /usr/bin/mount "$w/bin/mount"; cp -L /usr/bin/kmod "$w/bin/kmod"; ln -sf kmod "$w/bin/insmod"
+  # everything is dynamic: ship the loader and the libs
+  while read -r path; do cp -Ln "$path" "$w/usr/lib/"; done < <(ldd /usr/lib/initcpio/busybox /usr/bin/mount /usr/bin/kmod | awk '/=> \//{print $3}' | sort -u)
+  cp -L /lib64/ld-linux-x86-64.so.2 "$w/lib64/"
+  for m in 9p 9pnet_virtio; do
+    while read -r _ path; do
+      f=$(basename "$path" .zst); f=${f%.ko}
+      case " $mods " in *" $f "*) ;; *) mods="$mods $f"; zstd -dqf "$path" -o "$w/usr/lib/modules/$f.ko";; esac
+    done < <(modprobe -S "$kver" --show-depends "$m" | grep '^insmod')
+  done
+  printf '%s\n' $mods > "$w/usr/lib/modules/order"
+  cat > "$w/init" <<INIT
+#!/bin/sh
+mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
+for m in \$(cat /usr/lib/modules/order); do insmod /usr/lib/modules/\$m.ko || echo "insmod \$m failed"; done
+mount -t 9p -o trans=virtio,version=9p2000.L,ro,msize=1048576 root /newroot || { echo "9p root mount failed"; exec sh; }
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576 fd /newroot/mnt || echo "fd share mount failed"
+mount --move /proc /newroot/proc; mount --move /sys /newroot/sys; mount --move /dev /newroot/dev
+exec busybox run-init /newroot $rel/.devqemu/guest-init
+INIT
+  chmod +x "$w/init"
+  ( cd "$w" && find . | cpio -o -H newc --quiet | gzip -1 ) > "$work/initrd.img"
+  echo "$kver" > "$work/initrd.kver"
+}
+
+guest_init() {
+  cat > "$work/guest-init" <<'GUEST'
+#!/usr/bin/bash
+# PID 1 inside the VM. kernel cmdline: fd.mode=desktop|shell|diag
+export PATH=/usr/local/bin:/usr/bin:/usr/sbin
+exec >/dev/ttyS0 2>&1 </dev/ttyS0
+mode=desktop; repo=""
+for a in $(cat /proc/cmdline); do case $a in fd.mode=*) mode=${a#fd.mode=};; fd.repo=*) repo=${a#fd.repo=};; esac; done
+echo "[guest] kernel $(uname -r), mode=$mode"
+mount -t tmpfs -o mode=755 tmpfs /run; mount -t tmpfs tmpfs /tmp
+mkdir -p /dev/pts /dev/shm /run/user/0 /tmp/home /run/udev; chmod 700 /run/user/0
+mount -t devpts devpts /dev/pts; mount -t tmpfs tmpfs /dev/shm
+export HOME=/tmp/home XDG_RUNTIME_DIR=/run/user/0 XDG_SEAT=seat0 TERM=linux LANG=C.UTF-8
+for m in virtio_gpu virtio_input; do modprobe "$m" 2>&1 | head -2; done
+/usr/lib/systemd/systemd-udevd --daemon 2>&1 | head -3
+udevadm trigger --action=add; udevadm settle --timeout=5
+if [ "$mode" = diag ]; then
+  echo "[guest] dri:"; ls -l /dev/dri
+  for d in /sys/class/input/event*; do echo "[guest] $(basename $d): $(cat $d/device/name)"; done
+  echo "[guest] seatd: $(command -v seatd || echo MISSING)"; echo "[guest] repo: $(ls "$repo" | head -5 | tr '\n' ' ')"
+  poweroff -f
+fi
+seatd -g video >/tmp/seatd.log 2>&1 &
+sleep 0.3
+export LIBSEAT_BACKEND=seatd LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+export RUST_LOG=${RUST_LOG:-info,smithay=warn}
+[ -f "$repo/.devqemu/guest.conf" ] && export FD_CONFIG=$repo/.devqemu/guest.conf
+case $mode in
+  shell) exec setsid -c bash -i ;;
+  *) "$repo/target/debug/finedesktop"; echo "[guest] finedesktop exited with $?"; sleep 1; poweroff -f ;;
+esac
+GUEST
+  chmod +x "$work/guest-init"
+}
+
+mon() { printf '%s\n' "$1" | socat - "UNIX-CONNECT:$work/mon.sock" >/dev/null; }
+
+cmd=${1:-desktop}
+case $cmd in
+  initrd) initrd; echo "initrd ok ($kver)"; exit 0 ;;
+  kill) pkill -f 'name finedesktop-dev' && echo stopped || echo "not running"; exit 0 ;;
+  shot) out=${2:-$work/shot.ppm}; mon "screendump $out"; sleep 0.5; echo "$out"; exit 0 ;;
+  desktop|shell|diag|headless) ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
+esac
+
+[ -f "$work/initrd.img" ] && [ "$(cat "$work/initrd.kver" 2>/dev/null)" = "$kver" ] && [ "$work/initrd.img" -nt "$0" ] || initrd
+guest_init
+case $cmd in desktop|headless) cargo build -q --manifest-path "$repo/Cargo.toml" ;; esac
+disp="gtk,zoom-to-fit=off"; serial="file:$work/serial.log"; fdmode=desktop
+case $cmd in
+  shell) fdmode=shell; serial=stdio ;;
+  diag) fdmode=diag; disp=none ;;
+  headless) disp=none ;;
+esac
+: > "$work/serial.log"
+args=(-enable-kvm -cpu host -smp 4 -m "$mem"
+  -kernel "/usr/lib/modules/$kver/vmlinuz" -initrd "$work/initrd.img"
+  -append "console=ttyS0 loglevel=3 fd.mode=$fdmode fd.repo=$rel"
+  -fsdev local,id=root,path=/,security_model=none,readonly=on -device virtio-9p-pci,fsdev=root,mount_tag=root
+  -fsdev local,id=fd,path="$share",security_model=none -device virtio-9p-pci,fsdev=fd,mount_tag=fd
+  -device "virtio-vga,xres=${res%x*},yres=${res#*x}" -device virtio-keyboard-pci -device virtio-tablet-pci
+  -display "$disp" -serial "$serial" -monitor "unix:$work/mon.sock,server,nowait" -name finedesktop-dev)
+if [ "$cmd" = diag ]; then timeout 60 qemu-system-x86_64 "${args[@]}" || true; cat "$work/serial.log"
+else exec qemu-system-x86_64 "${args[@]}"; fi
