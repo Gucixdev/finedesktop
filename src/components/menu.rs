@@ -15,7 +15,9 @@ pub enum Id {
     AllApps,
     Games,
     Clip,
+    Calc,
     Settings,
+    Prefer,
     Themes,
     Modes,
     Layouts,
@@ -31,7 +33,9 @@ impl Id {
             "all" => Id::AllApps,
             "games" => Id::Games,
             "clip" | "clipboard" => Id::Clip,
+            "calc" => Id::Calc,
             "settings" => Id::Settings,
+            "prefer" => Id::Prefer,
             "themes" | "theme" => Id::Themes,
             "modes" | "mode" => Id::Modes,
             "layouts" | "layout" => Id::Layouts,
@@ -48,7 +52,9 @@ impl Id {
             Id::AllApps => "Wszystkie",
             Id::Games => "Gry",
             Id::Clip => "Schowek",
+            Id::Calc => "Kalkulator",
             Id::Settings => "Ustawienia",
+            Id::Prefer => "Preferowane aplikacje",
             Id::Themes => "Motyw",
             Id::Modes => "Tryb",
             Id::Layouts => "Uklad",
@@ -64,6 +70,11 @@ pub enum Act {
     Mode(String),
     Layout(String),
     Clip(String),
+    Copy(String),
+    /// pick an application for this role
+    PickPrefer(String),
+    /// make this command the preferred one for the role
+    SetPrefer { role: String, cmd: String },
     Reload,
     ReloadEngine,
     EditConfig,
@@ -120,6 +131,7 @@ impl Desktop {
                 e("Aplikacje", Act::Open(Id::Apps)),
                 e("Gry", Act::Open(Id::Games)),
                 e("Schowek", Act::Open(Id::Clip)),
+                e("Kalkulator", Act::Open(Id::Calc)),
                 e("Ustawienia", Act::Open(Id::Settings)),
             ],
             Id::Apps => vec![e("Natywne", Act::Open(Id::Native)), e("Flatpak", Act::Open(Id::Flatpak)), e("Wszystkie", Act::Open(Id::AllApps))],
@@ -128,14 +140,20 @@ impl Desktop {
             Id::AllApps => app_entries(|a| !a.game),
             Id::Games => app_entries(|a| a.game),
             Id::Clip => clip_entries(),
+            Id::Calc => vec![e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop)],
             Id::Settings => vec![
                 e("Motyw", Act::Open(Id::Themes)),
                 e("Tryb", Act::Open(Id::Modes)),
                 e("Uklad okien", Act::Open(Id::Layouts)),
+                e("Preferowane aplikacje", Act::Open(Id::Prefer)),
                 e("Przeladuj config", Act::Reload),
                 e("Przeladuj silniki", Act::ReloadEngine),
                 e("Edytuj config", Act::EditConfig),
             ],
+            Id::Prefer => crate::components::settings::settings_preferaps::ROLES
+                .iter()
+                .map(|r| Entry { label: format!("{r}: {}", self.config.prefer_get(r).unwrap_or_default()), act: Act::PickPrefer(r.to_string()) })
+                .collect(),
             Id::Themes => crate::components::theme::Theme::list().into_iter().map(|n| Entry { label: n.clone(), act: Act::Theme(n) }).collect(),
             Id::Modes => std::iter::once("off".to_string())
                 .chain(Desktop::mode_names())
@@ -167,6 +185,9 @@ impl Menu {
 
     /// Indices of the entries matching every word of the query (case-insensitive); prefix matches first.
     pub fn visible(&self) -> Vec<usize> {
+        if self.level().id == Id::Calc {
+            return (0..self.level().items.len()).collect(); // the query is an expression here, not a filter
+        }
         let q = self.query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         let items = &self.level().items;
@@ -204,7 +225,7 @@ impl Desktop {
                         self.menu_open(id);
                         "ok".into()
                     }
-                    None => "error: menu open root|apps|native|flatpak|all|games|clip|settings|themes|modes|layouts".into(),
+                    None => "error: menu open root|apps|native|flatpak|all|games|clip|calc|settings|themes|modes|layouts".into(),
                 };
             }
             "close" => {
@@ -223,11 +244,13 @@ impl Desktop {
             "type" => {
                 menu.query.push_str(rest);
                 menu.sel = 0;
+                self.menu_recalc();
             }
             "key" => match rest {
                 "space" => {
                     menu.query.push(' ');
                     menu.sel = 0;
+                    self.menu_recalc();
                 }
                 "up" => menu.sel = menu.sel.saturating_sub(1),
                 "down" | "tab" => menu.sel = (menu.sel + 1).min(vis.len().saturating_sub(1)),
@@ -237,6 +260,7 @@ impl Desktop {
                 "backspace" => {
                     if menu.query.pop().is_some() {
                         menu.sel = 0;
+                        self.menu_recalc();
                     } else if menu.stack.len() > 1 {
                         menu.stack.pop();
                     } else {
@@ -252,6 +276,24 @@ impl Desktop {
         "ok".into()
     }
 
+    /// In the calculator the single entry is the value of what has been typed.
+    fn menu_recalc(&mut self) {
+        let Some(menu) = self.menu.as_mut() else { return };
+        let level = menu.stack.last_mut().expect("a menu always has a level");
+        if level.id != Id::Calc {
+            return;
+        }
+        level.items = vec![match crate::components::calc::eval(&menu.query) {
+            Some(v) => {
+                let r = crate::components::calc::show(v);
+                Entry { label: format!("= {r}"), act: Act::Copy(r) }
+            }
+            None if menu.query.trim().is_empty() => e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop),
+            None => e("blad skladni", Act::Nop),
+        }];
+        menu.sel = 0;
+    }
+
     fn menu_enter(&mut self) -> String {
         let Some(menu) = self.menu.as_ref() else { return "error: menu is not open".into() };
         let vis = menu.visible();
@@ -261,6 +303,18 @@ impl Desktop {
             let level = self.menu_level(id);
             let menu = self.menu.as_mut().unwrap();
             menu.stack.push(level);
+            menu.query.clear();
+            menu.sel = 0;
+            return "ok".into();
+        }
+        if let Act::PickPrefer(role) = entry.act {
+            let term = self.config.terminal.clone();
+            let items = apps::scan()
+                .into_iter()
+                .map(|a| Entry { label: a.name.clone(), act: Act::SetPrefer { role: role.clone(), cmd: crate::components::settings::settings_preferaps::command_for(&a, &term) } })
+                .collect();
+            let menu = self.menu.as_mut().unwrap();
+            menu.stack.push(Level { id: Id::AllApps, items });
             menu.query.clear();
             menu.sel = 0;
             return "ok".into();
@@ -295,6 +349,11 @@ impl Desktop {
                 crate::keys::spawn(&format!("printf '%s\\t' '{id}' | cliphist decode | wl-copy"));
                 "ok".into()
             }
+            Act::SetPrefer { role, cmd } => self.prefer(&format!("{role} {cmd}")),
+            Act::Copy(text) => {
+                crate::keys::spawn(&format!("printf '%s' '{text}' | wl-copy"));
+                "ok".into()
+            }
             Act::Reload => self.run_action(Action::Reload),
             Act::ReloadEngine => self.run_action(Action::ReloadEngine),
             Act::EditConfig => {
@@ -303,7 +362,7 @@ impl Desktop {
                 crate::keys::spawn(&format!("{term} -e sh -c '${{EDITOR:-frost}} \"{path}\"'"));
                 "ok".into()
             }
-            Act::Open(_) | Act::Nop => "ok".into(),
+            Act::Open(_) | Act::PickPrefer(_) | Act::Nop => "ok".into(),
         }
     }
 }

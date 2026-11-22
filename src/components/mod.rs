@@ -9,3 +9,5 @@ pub mod widgets;
 pub mod bar;
 pub mod apps;
 pub mod menu;
+pub mod calc;
+pub mod settings;

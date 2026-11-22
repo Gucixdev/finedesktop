@@ -753,6 +753,7 @@ impl Desktop {
                 }
             }
             Action::Menu(c) => return self.menu_cmd(&c),
+            Action::Prefer(a) => return self.prefer(&a),
             Action::Layouts => return Layout::ALL.iter().map(|l| l.name()).collect::<Vec<_>>().join(" "),
             Action::ReloadEngine => {
                 return match self.reload_engine() {

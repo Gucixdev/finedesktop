@@ -43,6 +43,8 @@ pub enum Action {
     Layouts,
     /// `ctl menu ...`; also what the keys do while the menu is open
     Menu(String),
+    /// `ctl prefer [ROLE [COMMAND]]`
+    Prefer(String),
     Focus(Dir),
     /// `focus left|right|up|down`: the window in that direction, or the monitor beyond it
     FocusDir(crate::components::engine::focus_engine::Cardinal),
@@ -100,6 +102,8 @@ pub struct Binding {
 pub struct Config {
     pub modkey: Mods,
     pub terminal: String,
+    /// preferred browser, editor, files (the terminal is `terminal`): see settings_preferaps
+    pub prefer: std::collections::BTreeMap<String, String>,
     pub menu: String,
     pub gap: i32,
     pub mfact: f32,
@@ -140,6 +144,7 @@ impl Default for Config {
         Config {
             modkey: Mods { logo: true, ..Mods::default() },
             terminal: "foot".into(),
+            prefer: crate::components::settings::settings_preferaps::defaults(),
             menu: "dmenu_run".into(),
             gap: 0,
             mfact: 0.55,
@@ -205,6 +210,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "reload" => Action::Reload,
         "reload-engine" => Action::ReloadEngine,
         "layouts" => Action::Layouts,
+        "prefer" => Action::Prefer(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State,
         "zoom" => Action::Zoom,
@@ -333,6 +339,7 @@ impl Config {
                 let mods = self.parse_mods(mods)?;
                 let sym = keysym(k).ok_or_else(|| format!("unknown key {k:?}"))?;
                 let act = act.replace("$terminal", &self.terminal.clone()).replace("$menu", &self.menu.clone());
+                let act = self.prefer.iter().fold(act, |a, (role, cmd)| a.replace(&format!("${role}"), cmd));
                 let action = parse_action(&act)?;
                 self.binds.retain(|b| !(b.mods == mods && b.sym == sym));
                 let mut label: Vec<&str> = Vec::new();
@@ -349,7 +356,27 @@ impl Config {
                 let (mods, sym) = (self.parse_mods(mods)?, keysym(k.trim()).ok_or("unknown key")?);
                 self.binds.retain(|b| !(b.mods == mods && b.sym == sym));
             }
+            other if other.starts_with("prefer_") => self.prefer_set(&other["prefer_".len()..], val)?,
             other => return Err(format!("unknown setting {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// The command of a preferred-application role (`terminal` is the `terminal` setting).
+    pub fn prefer_get(&self, role: &str) -> Option<String> {
+        if role == "terminal" { Some(self.terminal.clone()) } else { self.prefer.get(role).cloned() }
+    }
+
+    pub fn prefer_set(&mut self, role: &str, cmd: &str) -> Result<(), String> {
+        if cmd.is_empty() {
+            return Err(format!("prefer_{role} needs a command"));
+        }
+        match role {
+            "terminal" => self.terminal = cmd.into(),
+            r if crate::components::settings::settings_preferaps::ROLES.contains(&r) => {
+                self.prefer.insert(r.into(), cmd.into());
+            }
+            _ => return Err(format!("unknown role {role:?} (have: {})", crate::components::settings::settings_preferaps::ROLES.join(" "))),
         }
         Ok(())
     }

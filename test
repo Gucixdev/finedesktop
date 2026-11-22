@@ -129,6 +129,15 @@ ctl menu open apps >/dev/null; ctl menu key backspace >/dev/null; ctl menu list 
 ctl menu key esc >/dev/null; ctl menu list 2>&1 | grep -q 'not open' && ok "esc closes the menu" || bad "esc"
 ctl menu open nonsense 2>&1 | grep -q '^error' && ok "bad menu id rejected" || bad "bad menu id"
 
+# calculator and preferred applications through the menu / ctl
+ctl menu open calc >/dev/null; ctl menu type "2+3*4" >/dev/null
+ctl menu list | sed -n 2p | grep -q '= 14' && ok "menu calculator" || bad "menu calculator"
+ctl menu key esc >/dev/null
+ctl prefer | grep -q '^terminal = ' && ok "ctl prefer lists roles" || bad "ctl prefer list"
+ctl prefer nonsense 2>&1 | grep -q '^error' && ok "unknown role rejected" || bad "unknown role"
+ctl menu open prefer >/dev/null; ctl menu list | sed -n 2p | grep -q 'terminal:' && ok "menu lists the roles" || bad "menu prefer"
+ctl menu key esc >/dev/null
+
 ctl bogus >/dev/null 2>&1 && bad "bogus action accepted" || ok "bogus action rejected"
 ctl layout nope 2>&1 | grep -q '^error' && ok "bad layout rejected" || bad "bad layout accepted"
 
