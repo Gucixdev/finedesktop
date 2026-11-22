@@ -45,6 +45,21 @@ pub fn take_unseen() -> Option<PathBuf> {
     Some(last)
 }
 
+/// The panic hook itself goes in first thing in main (a crash during start-up must be written too);
+/// this component tells the user about the last session's report.
+pub struct Crash;
+
+impl crate::flows::lifecycle::Component for Crash {
+    fn name(&self) -> &'static str {
+        "crash"
+    }
+    fn start(&mut self, d: &mut crate::Desktop) {
+        if let Some(report) = take_unseen() {
+            d.notify_cmd(&format!("the last session crashed: {}", report.display()));
+        }
+    }
+}
+
 impl crate::Desktop {
     pub fn crash_cmd(&mut self, _arg: &str) -> String {
         let r = reports();

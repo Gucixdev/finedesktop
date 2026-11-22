@@ -19,6 +19,21 @@ pub fn files() -> Vec<PathBuf> {
     v
 }
 
+/// The `exec =` lines of the config, then the folder.
+pub struct Autostart;
+
+impl crate::flows::lifecycle::Component for Autostart {
+    fn name(&self) -> &'static str {
+        "autostart"
+    }
+    fn start(&mut self, d: &mut Desktop) {
+        for cmd in d.config.exec.clone() {
+            crate::keys::spawn(&cmd);
+        }
+        d.autostart_run();
+    }
+}
+
 impl Desktop {
     pub fn autostart_run(&mut self) -> usize {
         let list = files();

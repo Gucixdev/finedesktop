@@ -57,6 +57,27 @@ pub fn low_check(percent: i32, charging: bool, limit: i32, warned: &mut bool) ->
     false
 }
 
+/// Looks at the battery once a minute.
+#[derive(Default)]
+pub struct Power {
+    seconds: u32,
+}
+
+impl crate::flows::lifecycle::Component for Power {
+    fn name(&self) -> &'static str {
+        "power"
+    }
+    fn start(&mut self, d: &mut Desktop) {
+        d.power_tick();
+    }
+    fn tick(&mut self, d: &mut Desktop) {
+        self.seconds += 1;
+        if self.seconds % 60 == 0 {
+            d.power_tick();
+        }
+    }
+}
+
 impl Desktop {
     pub fn power_cmd(&mut self, arg: &str) -> String {
         match arg.trim().split_once(' ').map_or((arg.trim(), ""), |(a, b)| (a, b.trim())) {
@@ -77,6 +98,8 @@ impl Desktop {
     /// Called about once a minute.
     pub fn power_tick(&mut self) {
         let Some(b) = battery() else { return };
+        self.observe("battery", &b.percent.to_string());
+        self.observe("charging", if b.charging { "yes" } else { "no" });
         let limit = self.config.low_battery;
         if low_check(b.percent, b.charging, limit, &mut self.low_warned) {
             let text = format!("battery low: {}%", b.percent);

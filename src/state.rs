@@ -72,7 +72,9 @@ pub struct Desktop {
     pub pointer_loc: Point<f64, Logical>,
 
     /// `finedesktop ctl subscribe` clients: every event is written to them as one line
-    pub subs: Vec<std::os::unix::net::UnixStream>,
+    pub bus: crate::flows::bus::Bus,
+    pub life: crate::flows::lifecycle::Lifecycle,
+    pub tags: crate::flows::tags::Tags,
     /// active mode and the config it replaced (restored on `mode off`)
     pub mode: Option<(String, Box<Config>, String)>,
     pub widgets: crate::components::widgets::Widgets,
@@ -175,7 +177,9 @@ impl Desktop {
             mons: Vec::new(),
             focus_mon: 0,
             pointer_loc: (0.0, 0.0).into(),
-            subs: Vec::new(),
+            bus: Default::default(),
+            life: Default::default(),
+            tags: Default::default(),
             mode: None,
             widgets: crate::components::widgets::Widgets::start(),
             engine: Default::default(),
@@ -425,6 +429,7 @@ impl Desktop {
             let (app, title) = self.known.remove(&id).unwrap_or_default();
             self.names.remove(&id);
             self.ruled.remove(&id);
+            self.tags.forget(id);
             self.emit(Event::close(id, &app, &title));
         }
         for (id, (app, title)) in alive {
@@ -788,6 +793,15 @@ impl Desktop {
             Action::Name(text) => return self.name_cmd(&text),
             Action::Session(what) => return self.session_cmd(&what),
             Action::Autostart(arg) => return self.autostart_cmd(&arg),
+            Action::Tags(arg) => return self.tags_cmd(&arg),
+            Action::Group(arg) => return self.group_cmd(&arg),
+            Action::Panels(arg) => return self.panels_cmd(&arg),
+            Action::Layers => return self.layers_cmd(),
+            Action::Components => return self.components_cmd(),
+            Action::Enable(n) => return self.set_component(&n, true),
+            Action::Disable(n) => return self.set_component(&n, false),
+            Action::Restart => return self.life_restart(),
+            Action::Observe(arg) => return self.observe_cmd(&arg),
             Action::Power(arg) => return self.power_cmd(&arg),
             Action::Crash(arg) => return self.crash_cmd(&arg),
             Action::Trash(arg) => return self.trash_cmd(&arg),

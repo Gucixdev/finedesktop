@@ -90,3 +90,25 @@ its own name). `fd-notify hi` is `finedesktop ctl notify hi`. Trash needs no com
   the next start posts a notification with the path. `fd-crash` lists reports (read ones get `.seen`, nothing is deleted).
 - **sound items**: `spk` and `mic` always show value and state: `spk 45% on`, `mic 80% off`, `mic --` when there is no
   device (wpctl has no default source, e.g. no microphone plugged in).
+
+## flows: the primitives (src/flows/)
+
+The desktop is built from a few primitives; features register with them instead of each inventing a mechanism.
+
+- **bus** (pub/sub/observer): every event goes through `emit`. Listeners: `ctl subscribe [TOPIC...]` streams
+  (`*` and `PREFIX*` work), in-process `Call` subscribers, and the scripts in `hooks/`. `update`, `fixupdate` and `tick`
+  are "hot": only delivered when named. Observer: `ctl observe NAME VALUE` (and `Desktop::observe`) publishes
+  `change NAME VALUE` only when the value differs; battery and charging are observed this way.
+- **lifecycle**: components get `awake`, `start`, `restart`, `update(dt)`, `fixed_update` (20 ms), `tick` (1 s),
+  `enabled`, `disabled`, `destroy`. Built in: `crash`, `autostart`, `power`. `ctl components`, `ctl enable|disable NAME`,
+  `ctl restart` (config + engine reload, windows stay).
+- **tags and groups**: `ctl tags [add|del TAG [WIN]|of]`, `rule = APP tag=a,b`, and `ctl group TAG list|focus|move N|close|tag NEW`
+  (a group is the windows carrying a tag).
+- **layers and panels**: `ctl layers` (background < bottom < tiled < floating < top < overlay), `ctl panels [show|hide|toggle bar|welcome|menu]`.
+- **fsm / hfsm**: flat and nested state machines (the menu's back path is an hfsm path).
+
+Hook scripts (`~/.config/finedesktop/hooks/`): `on-start on-restart on-destroy on-tick on-enabled on-disabled on-change
+on-tagged on-hook on-event` besides the older ones. `on-start`, `on-restart`, `on-destroy` run once for the desktop;
+`on-enabled`/`on-disabled` per component (`FD_NAME`); `on-event` gets every ordinary event (`FD_EVENT`); `on-hook` after
+another script was started. A script on `on-tick` starts one process a second: you asked for it by creating the file.
+There is no `on-update` or `on-fixupdate` script (50 processes a second); use `ctl subscribe update fixupdate`.

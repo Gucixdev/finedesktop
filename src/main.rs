@@ -9,6 +9,7 @@ mod config;
 mod ipc;
 mod keys;
 mod components;
+mod flows;
 mod state;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
@@ -54,7 +55,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let hm = components::widgets::now("%H:%M");
             if hm != last_min {
-                st.power_tick();
                 if !last_min.is_empty() {
                     st.emit(components::hooks::Event::minute(&hm));
                 }
@@ -69,14 +69,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!("engine: {e}");
         }
     }
-    state.emit(components::hooks::Event::start());
-    for cmd in state.config.exec.clone() {
-        keys::spawn(&cmd);
+    state.add_component(Box::new(components::crash::Crash));
+    state.add_component(Box::new(components::autostart::Autostart));
+    state.add_component(Box::new(components::power::Power::default()));
+    {
+        // frame clock for update / fixed update / tick (flows/lifecycle.rs)
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        let step = std::time::Duration::from_millis(16);
+        let mut last = std::time::Instant::now();
+        event_loop.handle().insert_source(Timer::from_duration(step), move |_, _, st| {
+            let now = std::time::Instant::now();
+            st.life_step((now - last).as_secs_f32());
+            last = now;
+            TimeoutAction::ToDuration(step)
+        })?;
     }
-    state.autostart_run();
-    if let Some(report) = components::crash::take_unseen() {
-        state.notify_cmd(&format!("the last session crashed: {}", report.display()));
-    }
+    state.life_start();
     if let [flag, command, ..] = args.as_slice() {
         if flag == "-c" || flag == "--command" {
             keys::spawn(command);
@@ -84,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     event_loop.run(None, &mut state, move |_| {})?;
+    state.life_destroy();
     let _ = std::fs::remove_file(sock);
     Ok(())
 }

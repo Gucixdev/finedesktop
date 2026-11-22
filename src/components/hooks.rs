@@ -14,11 +14,49 @@ pub struct Event {
     pub kind: &'static str,
     pub line: String,
     pub env: Vec<(&'static str, String)>,
+    /// false: bus only, no `hooks/on-*` script (per-component lifecycle, per-frame events)
+    pub scripts: bool,
 }
 
 impl Event {
     fn new(kind: &'static str, line: String, env: Vec<(&'static str, String)>) -> Event {
-        Event { kind, line, env }
+        Event { kind, line, env, scripts: true }
+    }
+    fn bus_only(mut self) -> Event {
+        self.scripts = false;
+        self
+    }
+    /// A component's own `awake` / `start` / `restart` / `destroy` (scripts hear the desktop's, see lifecycle.rs).
+    pub fn life(kind: &'static str, name: &str) -> Event {
+        Event::new(kind, format!("{kind} {name}"), vec![("FD_NAME", name.into())]).bus_only()
+    }
+    pub fn restart() -> Event {
+        Event::new("restart", "restart desktop".into(), vec![("FD_NAME", "desktop".into())])
+    }
+    pub fn destroy() -> Event {
+        Event::new("destroy", "destroy desktop".into(), vec![("FD_NAME", "desktop".into())])
+    }
+    pub fn tick() -> Event {
+        Event::new("tick", "tick".into(), vec![])
+    }
+    /// `update` / `fixupdate`: a line with the time step, never a script.
+    pub fn hot(kind: &'static str, dt: f32) -> Event {
+        Event::new(kind, format!("{kind} {dt:.4}"), vec![]).bus_only()
+    }
+    pub fn toggled(on: bool, name: &str) -> Event {
+        let kind = if on { "enabled" } else { "disabled" };
+        Event::new(kind, format!("{kind} {name}"), vec![("FD_NAME", name.into())])
+    }
+    pub fn change(name: &str, old: &str, new: &str) -> Event {
+        Event::new("change", format!("change {name} {new}"), vec![("FD_NAME", name.into()), ("FD_VALUE", new.into()), ("FD_OLD", old.into())])
+    }
+    pub fn tagged(win: u32, tag: &str, on: bool) -> Event {
+        Event::new("tagged", format!("tagged {win} {} {tag}", if on { '+' } else { '-' }), vec![
+            ("FD_WINDOW", win.to_string()), ("FD_NAME", tag.into()), ("FD_VALUE", if on { "+" } else { "-" }.into()),
+        ])
+    }
+    pub fn hook(name: &str) -> Event {
+        Event::new("hook", format!("hook {name}"), vec![("FD_NAME", name.into())])
     }
     pub fn start() -> Event {
         Event::new("start", "start".into(), vec![])
@@ -77,6 +115,15 @@ impl Event {
     /// File name of the hook that reacts to this event.
     pub fn hook_name(&self) -> &'static str {
         match self.kind {
+            "restart" => "on-restart",
+            "destroy" => "on-destroy",
+            "tick" => "on-tick",
+            "enabled" => "on-enabled",
+            "disabled" => "on-disabled",
+            "change" => "on-change",
+            "tagged" => "on-tagged",
+            "hook" => "on-hook",
+            "minute" => "on-minute",
             "start" => "on-start",
             "open" => "on-window-open",
             "close" => "on-window-close",
@@ -90,14 +137,16 @@ impl Event {
             "reload" => "on-reload",
             "user" => "on-user",
             "notify" => "on-notify",
-            _ => "on-minute",
+            _ => "",
         }
     }
 }
 
-pub const HOOKS: [&str; 14] = [
-    "on-start", "on-window-open", "on-window-close", "on-focus", "on-title-change", "on-tag-change",
-    "on-layout-change", "on-output", "on-theme-change", "on-mode-change", "on-reload", "on-user", "on-notify", "on-minute",
+/// Every script name. `on-event` also runs for every ordinary event (FD_EVENT says which); `on-hook` after any other hook ran.
+pub const HOOKS: [&str; 24] = [
+    "on-start", "on-restart", "on-destroy", "on-tick", "on-enabled", "on-disabled", "on-window-open", "on-window-close",
+    "on-focus", "on-title-change", "on-tag-change", "on-layout-change", "on-output", "on-theme-change", "on-mode-change",
+    "on-reload", "on-user", "on-notify", "on-minute", "on-change", "on-tagged", "on-hook", "on-event", "on-awake",
 ];
 
 const MODES: [(&str, &str); 5] = [
@@ -122,12 +171,53 @@ fn run_shell(cmd: &str) {
 }
 
 impl Desktop {
-    /// Publish an event: subscribers get the line, the matching hook gets started, the bar redraws.
+    /// Publish an event: stream and call subscribers on the bus get it, then the scripts (see flows/bus.rs).
     pub fn emit(&mut self, ev: Event) {
-        self.bar_dirty = true;
+        use crate::flows::bus::{self, Sink};
+        let hot = bus::is_hot(ev.kind);
+        if !hot {
+            self.bar_dirty = true;
+        }
         let line = format!("{}\n", ev.line.replace('\n', " "));
-        self.subs.retain_mut(|s| s.write_all(line.as_bytes()).is_ok());
-        let Some(path) = find_hook(ev.hook_name()) else { return };
+        self.bus.subs.retain_mut(|s| match &mut s.sink {
+            Sink::Stream(st) if bus::wants(&s.topics, ev.kind) => st.write_all(line.as_bytes()).is_ok(),
+            _ => true,
+        });
+        // in-process listeners are taken out while they run: they cannot hear what they cause, and may subscribe more
+        let (mut calls, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.bus.subs).into_iter().partition(|s| matches!(s.sink, Sink::Call(_)));
+        self.bus.subs = keep;
+        for s in calls.iter_mut() {
+            if let Sink::Call(f) = &mut s.sink {
+                if bus::wants(&s.topics, ev.kind) {
+                    f(self, &ev);
+                }
+            }
+        }
+        self.bus.subs.append(&mut calls);
+        if !ev.scripts || matches!(ev.kind, "update" | "fixupdate") {
+            return;
+        }
+        let mut ran = Vec::new();
+        if self.run_hook(ev.hook_name(), &ev) {
+            ran.push(ev.hook_name());
+        }
+        if !hot && self.run_hook("on-event", &ev) {
+            ran.push("on-event");
+        }
+        // `hook` is never announced for itself, so a script on-hook cannot start itself forever
+        if ev.kind != "hook" {
+            for name in ran {
+                self.emit(Event::hook(name));
+            }
+        }
+    }
+
+    /// Start `hooks/NAME` in the background if it exists and is executable. True when it was started.
+    fn run_hook(&self, name: &str, ev: &Event) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let Some(path) = find_hook(name) else { return false };
         let mut cmd = Command::new(path);
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         cmd.env("FD_EVENT", ev.kind).env("FD_LINE", &ev.line);
@@ -143,8 +233,12 @@ impl Desktop {
                 std::thread::spawn(move || {
                     let _ = child.wait();
                 });
+                true
             }
-            Err(e) => tracing::warn!("hook {}: {e}", ev.hook_name()),
+            Err(e) => {
+                tracing::warn!("hook {name}: {e}");
+                false
+            }
         }
     }
 

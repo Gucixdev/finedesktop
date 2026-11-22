@@ -289,7 +289,7 @@ impl Desktop {
 
     pub fn menu_open(&mut self, id: Id) {
         // opening a sub-menu directly still has its parents under it (hfsm path), so back goes up
-        let stack = super::hfsm::path_of(id, Id::parent).into_iter().map(|i| self.menu_level(i)).collect();
+        let stack = crate::flows::hfsm::path_of(id, Id::parent).into_iter().map(|i| self.menu_level(i)).collect();
         self.menu = Some(Menu { stack, ..Menu::default() });
         self.fx.panel_open();
         self.bar_dirty = true;
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn opening_a_deep_level_opens_the_path_to_it() {
-        let path = crate::components::hfsm::path_of(Id::Themes, Id::parent);
+        let path = crate::flows::hfsm::path_of(Id::Themes, Id::parent);
         assert_eq!(path, [Id::Root, Id::Settings, Id::Themes]);
     }
 }
