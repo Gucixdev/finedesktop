@@ -40,6 +40,7 @@ pub enum Action {
     Quit,
     Reload,
     ReloadEngine,
+    Layouts,
     Focus(Dir),
     /// `focus left|right|up|down`: the window in that direction, or the monitor beyond it
     FocusDir(crate::components::engine::focus_engine::Cardinal),
@@ -201,6 +202,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "quit" => Action::Quit,
         "reload" => Action::Reload,
         "reload-engine" => Action::ReloadEngine,
+        "layouts" => Action::Layouts,
         "state" => Action::State,
         "zoom" => Action::Zoom,
         "theme" if !rest.is_empty() => Action::Theme(rest.into()),

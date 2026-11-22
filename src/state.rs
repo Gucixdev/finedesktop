@@ -750,6 +750,7 @@ impl Desktop {
                     }
                 }
             }
+            Action::Layouts => return Layout::ALL.iter().map(|l| l.name()).collect::<Vec<_>>().join(" "),
             Action::ReloadEngine => {
                 return match self.reload_engine() {
                     Ok(m) => m,
