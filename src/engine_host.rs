@@ -17,14 +17,11 @@ struct Loaded {
     handle: *mut c_void,
     arrange: ArrangeFn,
     neighbor: NeighborFn,
-    /// private copy of the library that is actually mapped (dlopen would otherwise return the old one for the same path)
-    copy: PathBuf,
 }
 
 impl Drop for Loaded {
     fn drop(&mut self) {
         unsafe { libc::dlclose(self.handle) };
-        let _ = std::fs::remove_file(&self.copy);
     }
 }
 
@@ -66,6 +63,8 @@ impl EngineHost {
             let _ = std::fs::remove_file(&copy);
             return Err(format!("dlopen: {e}"));
         }
+        // the mapping outlives the file: unlink now so a crash or kill never leaves copies behind
+        let _ = std::fs::remove_file(&copy);
         let built = (|| {
             let abi_fn: unsafe extern "C" fn() -> u32 = sym(handle, "fd_engine_abi")?;
             let v = unsafe { abi_fn() };
@@ -76,12 +75,11 @@ impl EngineHost {
         })();
         match built {
             Ok((arrange, neighbor)) => {
-                self.loaded = Some(Loaded { handle, arrange, neighbor, copy });
+                self.loaded = Some(Loaded { handle, arrange, neighbor });
                 Ok(format!("engine loaded from {} (abi {})", path.display(), abi::ABI))
             }
             Err(e) => {
                 unsafe { libc::dlclose(handle) };
-                let _ = std::fs::remove_file(&copy);
                 Err(e)
             }
         }

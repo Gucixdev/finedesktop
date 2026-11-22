@@ -432,12 +432,12 @@ fn parse_color(s: &str) -> Result<[f32; 4], String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn default_bar_has_workspaces_right_and_status_left() {
+    fn default_bar_has_workspaces_left_and_status_right() {
         let mut c = Config::default();
         assert!(c.apply(DEFAULT).is_empty());
-        assert_eq!(c.bar_right, vec!["tags"]);
-        assert_eq!(c.bar_left.first().map(String::as_str), Some("spk"));
-        assert!(c.bar_left.contains(&"time".to_string()));
+        assert_eq!(c.bar_left, vec!["tags"]);
+        assert_eq!(c.bar_right.first().map(String::as_str), Some("spk"));
+        assert_eq!(c.bar_right.last().map(String::as_str), Some("time"));
     }
 
     use super::*;
