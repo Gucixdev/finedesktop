@@ -1,4 +1,4 @@
-//! The one menu panel (Super+W): Aplikacje (native / Flatpak), Gry, Schowek, Ustawienia. Drawn by the compositor like
+//! The menu panel (Super+Shift+W): Aplikacje (ONE list, sections Flatpak / Natywne / Gry), Schowek, Skrypty, Kalkulator, Ustawienia. Drawn by the compositor like
 //! the bar, driven by keys or by `ctl menu ...`, so a script or an agent uses exactly what the user uses.
 //! A level is a title plus entries; an entry opens another level or does one thing.
 
@@ -13,6 +13,7 @@ pub enum Id {
     AllApps,
     Run,
     Games,
+    Scripts,
     Clip,
     Calc,
     Settings,
@@ -31,6 +32,7 @@ impl Id {
             "all" => Id::AllApps,
             "run" | "launcher" => Id::Run,
             "games" => Id::Games,
+            "scripts" | "script" => Id::Scripts,
             "clip" | "clipboard" => Id::Clip,
             "calc" => Id::Calc,
             "settings" => Id::Settings,
@@ -46,7 +48,7 @@ impl Id {
     pub fn parent(self) -> Option<Id> {
         match self {
             Id::Root | Id::Run => None,
-            Id::Apps | Id::Games | Id::Clip | Id::Calc | Id::Settings => Some(Id::Root),
+            Id::Apps | Id::Games | Id::Scripts | Id::Clip | Id::Calc | Id::Settings => Some(Id::Root),
             Id::Prefer | Id::Themes | Id::Modes | Id::Layouts => Some(Id::Settings),
             Id::AllApps => Some(Id::Prefer),
         }
@@ -59,6 +61,7 @@ impl Id {
             Id::AllApps => "Wszystkie",
             Id::Run => "Uruchom",
             Id::Games => "Gry",
+            Id::Scripts => "Skrypty",
             Id::Clip => "Schowek",
             Id::Calc => "Kalkulator",
             Id::Settings => "Ustawienia",
@@ -158,6 +161,26 @@ fn any_app(_: &apps::App) -> bool {
     true
 }
 
+/// Executables in `<config dir>/scripts/`: drop a file there and it is in the menu.
+fn script_entries() -> Vec<Entry> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::config::config_dir().map(|d| d.join("scripts"));
+    let mut v: Vec<Entry> = dir
+        .as_ref()
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|f| std::fs::metadata(f.path()).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+        .map(|f| Entry { label: f.file_name().to_string_lossy().into_owned(), act: Act::Run { cmd: f.path().to_string_lossy().into_owned(), terminal: false } })
+        .collect();
+    v.sort_by(|a, b| a.label.cmp(&b.label));
+    if v.is_empty() {
+        v.push(e("no scripts: put executables in <config dir>/scripts/", Act::Nop));
+    }
+    v
+}
+
 fn clip_entries() -> Vec<Entry> {
     match std::process::Command::new("cliphist").arg("list").output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
@@ -175,12 +198,12 @@ impl Desktop {
         let items = match id {
             Id::Root => vec![
                 e("Aplikacje", Act::Open(Id::Apps)),
-                e("Gry", Act::Open(Id::Games)),
                 e("Schowek", Act::Open(Id::Clip)),
+                e("Skrypty", Act::Open(Id::Scripts)),
                 e("Kalkulator", Act::Open(Id::Calc)),
                 e("Ustawienia", Act::Open(Id::Settings)),
             ],
-            Id::Apps | Id::AllApps => grouped(&[("Natywne", is_native), ("Flatpak", is_flatpak), ("Gry", is_game)]),
+            Id::Apps | Id::AllApps => grouped(&[("Flatpak", is_flatpak), ("Natywne", is_native), ("Gry", is_game)]),
             Id::Games => grouped(&[("Natywne", is_game_native), ("Flatpak", is_game_flatpak)]),
             Id::Run => {
                 let mut v = grouped(&[("Aplikacje", any_app)]);
@@ -188,6 +211,7 @@ impl Desktop {
                 v.extend(super::launcher::commands().into_iter().map(|c| Entry { label: c.clone(), act: Act::Run { cmd: c, terminal: false } }));
                 v
             }
+            Id::Scripts => script_entries(),
             Id::Clip => clip_entries(),
             Id::Calc => vec![e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop)],
             Id::Settings => vec![
@@ -320,7 +344,7 @@ impl Desktop {
                         self.menu_open(id);
                         "ok".into()
                     }
-                    None => "error: menu open root|apps|games|clip|calc|settings|themes|modes|layouts, or menu launch".into(),
+                    None => "error: menu open root|apps|games|scripts|clip|calc|settings|themes|modes|layouts, or menu launch".into(),
                 };
             }
             "close" => {

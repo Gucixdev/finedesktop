@@ -53,7 +53,7 @@ A theme is a separate setting from a mode: a theme is how it looks, a mode is ho
 
 ## Menu and logs
 
-`Mod+Shift+W` opens one centred list: Aplikacje (Natywne, Flatpak and Gry as sections of the same list), Gry, Schowek,
-Kalkulator, Ustawienia. Type filters, Left goes back (clears the query first), Right/Enter goes in.
+`Mod+Shift+W` opens the menu: Aplikacje (ONE list with sections Flatpak / Natywne / Gry), Schowek, Skrypty
+(executables in `<config dir>/scripts/`), Kalkulator, Ustawienia. Type filters, Left goes back (clears the query first), Right/Enter goes in.
 `ctl menu launch` (Mod+W) is the launcher. `ctl log [N]` prints the last N log lines (also kept in
 `~/.local/state/finedesktop/log`); every action, from a key, `ctl` or a hook, is logged as `action: ...`.
