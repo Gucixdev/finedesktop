@@ -261,6 +261,18 @@ mod tests {
         assert!("aAzZ09".chars().all(|c| f.map.contains_key(&c)));
     }
 
+    /// FD_FONT_PNG=out.png FD_FONT=path cargo test font_sample: renders a line with the chosen font, for looking at.
+    #[test]
+    fn font_sample() {
+        let (Some(out), Some(path)) = (std::env::var_os("FD_FONT_PNG"), std::env::var_os("FD_FONT")) else { return };
+        Font::select(path.to_str().unwrap());
+        let mut c = Canvas::new(520, 80, [20, 24, 28]);
+        c.text(6, 6, "Zażółć gęślą jaźń 12:34:56  2026-11-22", [200, 230, 200], 1, 520);
+        c.text(6, 30, "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789", [200, 230, 200], 1, 520);
+        c.text(6, 54, "fn main() { println!(\"hello\"); } // x |-_=+[]", [120, 200, 255], 2, 520);
+        std::fs::write(out, super::super::capture::png(520, 80, &c.px)).unwrap();
+    }
+
     #[test]
     fn text_draws_pixels_and_clips() {
         let mut c = Canvas::new(40, 16, [0, 0, 0]);
