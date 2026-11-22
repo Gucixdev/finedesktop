@@ -64,9 +64,10 @@ pub fn init_winit(
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
+                    let ov = super::bar::overlay(state, renderer, &output);
                     smithay::desktop::space::render_output::<
                         _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
+                        super::bar::Ov,
                         _,
                         _,
                     >(
@@ -76,7 +77,7 @@ pub fn init_winit(
                         1.0,
                         0,
                         [&state.space],
-                        &[],
+                        &ov,
                         &mut damage_tracker,
                         state.config.background,
                     )

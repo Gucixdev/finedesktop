@@ -1,0 +1,5 @@
+# game mode: the system gets out of the way. Behaviour only; looks belong to the theme.
+widgets = off
+bar_interval = 30
+enter = command -v powerprofilesctl >/dev/null && powerprofilesctl set performance
+leave = command -v powerprofilesctl >/dev/null && powerprofilesctl set balanced

@@ -75,7 +75,7 @@ sleep 0.3
 export LIBSEAT_BACKEND=seatd LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
 export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 export RUST_LOG=${RUST_LOG:-info,smithay=warn}
-[ -f "$repo/.devqemu/guest.conf" ] && export FD_CONFIG=$repo/.devqemu/guest.conf
+[ -d "$repo/.devqemu/config" ] && export FD_CONFIG_DIR=$repo/.devqemu/config
 case $mode in
   shell) exec setsid -c bash -i ;;
   *) "$repo/target/debug/finedesktop" -c foot; echo "[guest] finedesktop exited with $?"; sleep 1; poweroff -f ;;
@@ -110,7 +110,7 @@ args=(-enable-kvm -cpu host -smp 4 -m "$mem"
   -append "console=ttyS0 loglevel=3 fd.mode=$fdmode fd.repo=$rel"
   -fsdev local,id=root,path=/,security_model=none,readonly=on -device virtio-9p-pci,fsdev=root,mount_tag=root
   -fsdev local,id=fd,path="$share",security_model=none -device virtio-9p-pci,fsdev=fd,mount_tag=fd
-  -device "virtio-vga,xres=${res%x*},yres=${res#*x}" -device virtio-keyboard-pci -device virtio-tablet-pci
+  -device "virtio-vga,xres=${res%x*},yres=${res#*x},edid=off" -device virtio-keyboard-pci -device virtio-tablet-pci
   -display "$disp" -serial "$serial" -monitor "unix:$work/mon.sock,server,nowait" -name finedesktop-dev)
 if [ "$cmd" = diag ]; then timeout 60 qemu-system-x86_64 "${args[@]}" || true; cat "$work/serial.log"
 else exec qemu-system-x86_64 "${args[@]}"; fi

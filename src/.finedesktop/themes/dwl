@@ -1,0 +1,14 @@
+# the look of the old dwl + lemonbar setup (gruvbox-ish)
+bg = #222222
+fg = #ebdbb2
+dim = #928374
+accent = #fabd2f
+urgent = #ff0000
+bar_bg = #222222
+sel_bg = #458588
+sel_fg = #ebdbb2
+border_normal = #444444
+border_focus = #005577
+border = 1
+gap = 0
+animations = off

@@ -52,6 +52,7 @@ type Compositor = DrmCompositor<
 smithay::backend::renderer::element::render_elements! {
     pub Elem<=GlesRenderer>;
     Cursor = MemoryRenderBufferRenderElement<GlesRenderer>,
+    Overlay = super::bar::Ov,
     Space = SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
 }
 
@@ -235,8 +236,14 @@ pub fn init(event_loop: &mut EventLoop<Desktop>, state: &mut Desktop) -> Result<
 
 /// Draw one output and queue the frame. When nothing changed no vblank will come, so poll again shortly.
 fn render(state: &mut Desktop, crtc: crtc::Handle) {
+    // the overlay needs `&mut Desktop` and the renderer at once: lift the backend out of the state meanwhile
+    let Some(mut d) = state.drm.take() else { return };
+    render_with(state, &mut d, crtc);
+    state.drm = Some(d);
+}
+
+fn render_with(state: &mut Desktop, d: &mut Drm, crtc: crtc::Handle) {
     let pointer = state.pointer_loc;
-    let Some(d) = state.drm.as_mut() else { return };
     if !d.active {
         return;
     }
@@ -253,6 +260,8 @@ fn render(state: &mut Desktop, crtc: crtc::Handle) {
             elements.push(e.into());
         }
     }
+    let ov = super::bar::overlay(state, &mut d.renderer, &output);
+    elements.extend(ov.into_iter().map(Elem::from));
     match space_render_elements(&mut d.renderer, [&state.space], &output, 1.0) {
         Ok(v) => elements.extend(v.into_iter().map(Elem::from)),
         Err(e) => tracing::warn!("render elements: {e}"),

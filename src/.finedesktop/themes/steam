@@ -1,0 +1,14 @@
+# the Steam client / Deck palette
+bg = #171a21
+fg = #c7d5e0
+dim = #8f98a0
+accent = #66c0f4
+urgent = #ff5555
+bar_bg = #1b2838
+sel_bg = #66c0f4
+sel_fg = #171a21
+border_normal = #2a475e
+border_focus = #66c0f4
+border = 2
+gap = 4
+animations = on

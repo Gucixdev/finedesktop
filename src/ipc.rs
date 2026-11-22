@@ -40,6 +40,14 @@ fn serve(stream: UnixStream, state: &mut Desktop) {
     if BufReader::new(&stream).read_line(&mut line).is_err() {
         return;
     }
+    if line.trim() == "subscribe" {
+        // keep the connection: every later event is written to it as one line
+        let _ = stream.set_read_timeout(None);
+        let _ = stream.set_nonblocking(true);
+        let _ = (&stream).write_all(b"ok\n");
+        state.subs.push(stream);
+        return;
+    }
     let reply = match crate::config::parse_action(&line) {
         Ok(action) => state.run_action(action),
         Err(e) => format!("error: {e}"),

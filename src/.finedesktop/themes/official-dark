@@ -1,0 +1,14 @@
+# the default finedesktop dark look
+bg = #1a1a1a
+fg = #e6e6e6
+dim = #808080
+accent = #3584e4
+urgent = #e5484d
+bar_bg = #242424
+sel_bg = #3584e4
+sel_fg = #ffffff
+border_normal = #333333
+border_focus = #3584e4
+border = 2
+gap = 4
+animations = on

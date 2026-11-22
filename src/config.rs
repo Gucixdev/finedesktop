@@ -50,6 +50,29 @@ pub enum Action {
     SendMon(Dir),
     State,
     Vt(u8),
+    /// `theme NAME`, `theme list`
+    Theme(String),
+    /// `mode NAME`, `mode off`, `mode list`
+    Mode(String),
+    /// `emit NAME TEXT`: a user event for hooks and subscribers
+    Emit(String),
+    /// `bar toggle|top|bottom|off`
+    Bar(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarPos {
+    Top,
+    Bottom,
+    Off,
+}
+
+/// `segment = NAME SECONDS COMMAND`: a bar widget that runs COMMAND every SECONDS and shows its first line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Segment {
+    pub name: String,
+    pub every: u64,
+    pub cmd: String,
 }
 
 #[derive(Clone, Debug)]
@@ -67,12 +90,24 @@ pub struct Config {
     pub gap: i32,
     pub mfact: f32,
     pub nmaster: usize,
-    pub bar_h: i32,
     pub layout: Layout,
     pub workspaces: usize,
     pub background: [f32; 4],
     pub binds: Vec<Binding>,
     pub exec: Vec<String>,
+    pub theme: crate::components::theme::Theme,
+    pub bar: BarPos,
+    pub bar_left: Vec<String>,
+    pub bar_right: Vec<String>,
+    pub segments: Vec<Segment>,
+    /// seconds between bar refreshes (clock, cpu, ram ...)
+    pub bar_interval: u64,
+    pub font_scale: i32,
+    /// background widget scripts (`segment`s and widgets/ files) run; modes switch this off
+    pub widgets: bool,
+    /// shell commands a mode runs when it is entered / left (mode files only)
+    pub enter: String,
+    pub leave: String,
 }
 
 impl Default for Config {
@@ -84,12 +119,21 @@ impl Default for Config {
             gap: 0,
             mfact: 0.55,
             nmaster: 1,
-            bar_h: 22,
             layout: Layout::Tile,
             workspaces: 9,
             background: [0.0, 0.0, 0.0, 1.0],
             binds: Vec::new(),
             exec: Vec::new(),
+            theme: Default::default(),
+            bar: BarPos::Top,
+            bar_left: vec!["tags".into(), "layout".into(), "title".into()],
+            bar_right: vec!["cpu".into(), "ram".into(), "vol".into(), "bat".into(), "clock".into()],
+            segments: Vec::new(),
+            bar_interval: 1,
+            font_scale: 1,
+            widgets: true,
+            enter: String::new(),
+            leave: String::new(),
         }
     }
 }
@@ -129,6 +173,10 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "reload" => Action::Reload,
         "state" => Action::State,
         "zoom" => Action::Zoom,
+        "theme" if !rest.is_empty() => Action::Theme(rest.into()),
+        "mode" if !rest.is_empty() => Action::Mode(rest.into()),
+        "emit" if !rest.is_empty() => Action::Emit(rest.into()),
+        "bar" if !rest.is_empty() => Action::Bar(rest.into()),
         "focus" => Action::Focus(parse_dir(rest)?),
         "layout" => match rest {
             "next" | "prev" => Action::Layout(LayoutSel::Dir(parse_dir(rest)?)),
@@ -199,10 +247,35 @@ impl Config {
             "gap" => self.gap = n(val)?.max(0),
             "mfact" => self.mfact = f(val)?.clamp(0.1, 0.9),
             "nmaster" => self.nmaster = n(val)?.max(0) as usize,
-            "bar_h" => self.bar_h = n(val)?.max(0),
             "workspaces" => self.workspaces = (n(val)?.clamp(1, 32)) as usize,
             "layout" => self.layout = Layout::from_name(val).ok_or_else(|| format!("unknown layout {val:?}"))?,
             "background" => self.background = parse_color(val)?,
+            "theme" => self.set_theme(val)?,
+            "border" => self.theme.border = n(val)?.max(0),
+            "animations" => self.theme.animations = matches!(val, "on" | "true" | "yes" | "1"),
+            "bar" => self.bar = match val {
+                "top" | "on" => BarPos::Top,
+                "bottom" => BarPos::Bottom,
+                "off" => BarPos::Off,
+                _ => return Err(format!("bar = top|bottom|off, got {val:?}")),
+            },
+            "bar_left" => self.bar_left = val.split_whitespace().map(String::from).collect(),
+            "bar_right" => self.bar_right = val.split_whitespace().map(String::from).collect(),
+            "bar_interval" => self.bar_interval = n(val)?.clamp(1, 3600) as u64,
+            "font_scale" => self.font_scale = n(val)?.clamp(1, 4),
+            "widgets" => self.widgets = matches!(val, "on" | "true" | "yes" | "1"),
+            "enter" => self.enter = val.into(),
+            "leave" => self.leave = val.into(),
+            "segment" => {
+                let mut p = val.splitn(3, char::is_whitespace);
+                let (name, every, cmd) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or("").trim());
+                let every = every.parse::<u64>().map_err(|_| "segment = NAME SECONDS COMMAND".to_string())?;
+                if name.is_empty() || cmd.is_empty() {
+                    return Err("segment = NAME SECONDS COMMAND".into());
+                }
+                self.segments.retain(|s| s.name != name);
+                self.segments.push(Segment { name: name.into(), every: every.max(1), cmd: cmd.into() });
+            }
             "exec" => self.exec.push(val.into()),
             "bind" => {
                 let mut p = val.splitn(3, ',').map(str::trim);
@@ -240,17 +313,39 @@ impl Config {
         c
     }
 
+    /// Switch the theme and copy its looks into the live settings.
+    /// Height of the status bar and of the tab/stack bars: one text row plus padding.
+    pub fn bar_height(&self) -> i32 {
+        16 * self.font_scale + 6
+    }
+
+    pub fn set_theme(&mut self, name: &str) -> Result<(), String> {
+        let t = crate::components::theme::Theme::load(name)?;
+        self.gap = t.gap;
+        self.background = crate::components::theme::to_f32(t.bg);
+        self.theme = t;
+        Ok(())
+    }
+
     pub fn find(&self, mods: Mods, sym: u32) -> Option<&Action> {
         let sym = norm(sym);
         self.binds.iter().find(|b| b.mods == mods && b.sym == sym).map(|b| &b.action)
     }
 }
 
-pub fn user_path() -> Option<std::path::PathBuf> {
+/// `$XDG_CONFIG_HOME/finedesktop` (or `$FD_CONFIG_DIR`): config, themes/, hooks/, widgets/, mode/, autostart/.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    if let Some(d) = std::env::var_os("FD_CONFIG_DIR") {
+        return Some(d.into());
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
-    Some(base.join("finedesktop").join("config"))
+    Some(base.join("finedesktop"))
+}
+
+pub fn user_path() -> Option<std::path::PathBuf> {
+    config_dir().map(|d| d.join("config"))
 }
 
 fn expand_home(s: &str) -> String {

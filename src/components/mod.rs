@@ -2,3 +2,8 @@ pub mod compositor;
 pub mod compositor_drm;
 pub mod compositor_winit;
 pub mod engine;
+pub mod font;
+pub mod theme;
+pub mod hooks;
+pub mod widgets;
+pub mod bar;

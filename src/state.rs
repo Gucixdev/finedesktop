@@ -67,6 +67,19 @@ pub struct Desktop {
     pub mons: Vec<Mon>,
     pub focus_mon: usize,
     pub pointer_loc: Point<f64, Logical>,
+
+    /// `finedesktop ctl subscribe` clients: every event is written to them as one line
+    pub subs: Vec<std::os::unix::net::UnixStream>,
+    /// active mode and the config it replaced (restored on `mode off`)
+    pub mode: Option<(String, Box<Config>, String)>,
+    pub widgets: crate::components::widgets::Widgets,
+    /// something the bar shows changed; redraw on the next frame
+    pub bar_dirty: bool,
+    /// windows already announced: id -> (app_id, title)
+    pub known: std::collections::HashMap<u32, (String, String)>,
+    pub last_focus: Option<u32>,
+    pub bar_cache: std::collections::HashMap<String, (u64, smithay::backend::renderer::element::memory::MemoryRenderBuffer)>,
+    pub solid_ids: std::collections::HashMap<(String, usize), smithay::backend::renderer::element::Id>,
 }
 
 impl Desktop {
@@ -139,6 +152,14 @@ impl Desktop {
             mons: Vec::new(),
             focus_mon: 0,
             pointer_loc: (0.0, 0.0).into(),
+            subs: Vec::new(),
+            mode: None,
+            widgets: crate::components::widgets::Widgets::start(),
+            bar_dirty: true,
+            known: Default::default(),
+            last_focus: None,
+            bar_cache: Default::default(),
+            solid_ids: Default::default(),
         }
     }
 
@@ -213,7 +234,7 @@ impl Desktop {
             clients: Vec::new(),
             focus: 0,
             layout: c.layout,
-            params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_h },
+            params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_height() },
         }
     }
 
@@ -261,7 +282,25 @@ impl Desktop {
         map.arrange();
         let zone = map.non_exclusive_zone();
         drop(map);
-        Some(Rect { x: geo.loc.x + zone.loc.x, y: geo.loc.y + zone.loc.y, w: zone.size.w, h: zone.size.h })
+        let mut r = Rect { x: geo.loc.x + zone.loc.x, y: geo.loc.y + zone.loc.y, w: zone.size.w, h: zone.size.h };
+        // the status bar is ours, not a layer surface: take its row off the top or bottom
+        let bh = self.config.bar_height();
+        match self.config.bar {
+            crate::config::BarPos::Top => {
+                r.y += bh;
+                r.h -= bh;
+            }
+            crate::config::BarPos::Bottom => r.h -= bh,
+            crate::config::BarPos::Off => {}
+        }
+        Some(r)
+    }
+
+    /// Tell the widget worker what the config wants (segments, interval, on/off) and redraw the bar.
+    pub fn apply_widget_state(&mut self) {
+        self.widgets.configure(&self.config);
+        self.bar_dirty = true;
+        self.retile();
     }
 
     /// Drop dead windows, run the layout engine on every monitor and apply the plans.
@@ -330,9 +369,41 @@ impl Desktop {
         }
     }
 
+    /// Emit close / focus / title events by comparing against what we last announced.
+    fn diff_events(&mut self) {
+        use crate::components::hooks::Event;
+        let mut alive = std::collections::HashMap::new();
+        for m in &self.mons {
+            for w in m.ws.iter().flat_map(|ws| ws.clients.iter()) {
+                let (id, app, title) = Desktop::win_info(w);
+                alive.insert(id, (app, title));
+            }
+        }
+        let gone: Vec<u32> = self.known.keys().filter(|id| !alive.contains_key(id)).copied().collect();
+        for id in gone {
+            let (app, title) = self.known.remove(&id).unwrap_or_default();
+            self.emit(Event::close(id, &app, &title));
+        }
+        for (id, (app, title)) in alive {
+            if self.known.get(&id).is_some_and(|(_, t)| *t != title) {
+                self.emit(Event::title(id, &app, &title));
+            }
+            self.known.insert(id, (app, title));
+        }
+        let now = self.focused().map(|(_, w)| Desktop::win_info(w));
+        let id = now.as_ref().map(|n| n.0);
+        if id != self.last_focus {
+            self.last_focus = id;
+            if let Some((id, app, title)) = now {
+                self.emit(Event::focus(id, &app, &title));
+            }
+        }
+    }
+
     /// Give keyboard focus to the focused window (or nobody) and re-run the layouts.
     pub fn refocus(&mut self) {
         self.retile();
+        self.diff_events();
         let surf = self.focused().and_then(|(_, w)| w.toplevel().map(|t| t.wl_surface().clone()));
         if let Some(w) = self.focused().map(|(_, w)| w.clone()) {
             self.space.raise_element(&w, false);
@@ -354,12 +425,29 @@ impl Desktop {
         self.refocus();
     }
 
+    /// (id, app_id, title) of a toplevel, for events and the bar.
+    pub fn win_info(w: &Window) -> (u32, String, String) {
+        let Some(t) = w.toplevel() else { return (0, String::new(), String::new()) };
+        let id = smithay::reexports::wayland_server::Resource::id(t.wl_surface()).protocol_id();
+        let (app, title) = smithay::wayland::compositor::with_states(t.wl_surface(), |s| {
+            s.data_map
+                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                .and_then(|d| d.lock().ok().map(|d| (d.app_id.clone().unwrap_or_default(), d.title.clone().unwrap_or_default())))
+                .unwrap_or_default()
+        });
+        (id, app, title)
+    }
+
     pub fn add_window(&mut self, win: Window) {
         let mi = self.focus_mon.min(self.mons.len().saturating_sub(1));
         let Some(m) = self.mons.get_mut(mi) else { return };
         let cur = m.cur;
+        let out = m.output.name();
+        let (id, app, title) = Desktop::win_info(&win);
         m.ws[cur].clients.insert(0, win);
         m.ws[cur].focus = 0;
+        self.known.insert(id, (app.clone(), title.clone()));
+        self.emit(crate::components::hooks::Event::open(id, &out, cur + 1, &app, &title));
         self.refocus();
     }
 
@@ -384,6 +472,10 @@ impl Desktop {
 
     pub fn load_config(&mut self) {
         self.config = Config::load();
+        self.mode = None;
+        self.widgets.configure(&self.config);
+        self.bar_dirty = true;
+        self.emit(crate::components::hooks::Event::reload());
         let c = self.config.clone();
         for m in &mut self.mons {
             while m.ws.len() < c.workspaces {
@@ -391,12 +483,12 @@ impl Desktop {
                     clients: Vec::new(),
                     focus: 0,
                     layout: c.layout,
-                    params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_h },
+                    params: Params { nmaster: c.nmaster, mfact: c.mfact, gap: c.gap, bar_h: c.bar_height() },
                 });
             }
             for ws in &mut m.ws {
                 ws.params.gap = c.gap;
-                ws.params.bar_h = c.bar_h;
+                ws.params.bar_h = c.bar_height();
             }
         }
         self.refocus();
@@ -426,6 +518,25 @@ impl Desktop {
                 self.load_config();
             }
             Action::State => return self.report(),
+            Action::Theme(name) => return self.set_theme(&name),
+            Action::Mode(name) => return self.set_mode(&name),
+            Action::Emit(text) => {
+                let (name, rest) = text.split_once(' ').unwrap_or((text.as_str(), ""));
+                self.emit(crate::components::hooks::Event::user(name, rest));
+            }
+            Action::Bar(how) => {
+                use crate::config::BarPos;
+                let c = &mut self.config;
+                c.bar = match how.as_str() {
+                    "top" => BarPos::Top,
+                    "bottom" => BarPos::Bottom,
+                    "off" | "hide" => BarPos::Off,
+                    "toggle" => if c.bar == BarPos::Off { BarPos::Top } else { BarPos::Off },
+                    _ => return "error: bar top|bottom|off|toggle".into(),
+                };
+                self.bar_dirty = true;
+                self.retile();
+            }
             Action::Focus(d) => {
                 let n = self.mons[mi].ws[cur].clients.len();
                 if n > 0 {
@@ -450,7 +561,10 @@ impl Desktop {
                     LayoutSel::Dir(Dir::Next) => ws.layout.next(),
                     LayoutSel::Dir(Dir::Prev) => ws.layout.prev(),
                 };
+                let name = ws.layout.name();
+                let out = self.mons[mi].output.name();
                 self.refocus();
+                self.emit(crate::components::hooks::Event::layout(&out, name));
             }
             Action::Mfact(d) => {
                 let p = &mut self.mons[mi].ws[cur].params;
@@ -465,7 +579,9 @@ impl Desktop {
             Action::View(sel) => {
                 let t = self.ws_target(mi, sel);
                 self.mons[mi].cur = t;
+                let out = self.mons[mi].output.name();
                 self.refocus();
+                self.emit(crate::components::hooks::Event::tag(&out, t + 1, 0));
             }
             Action::Tag(sel) => {
                 let t = self.ws_target(mi, sel);

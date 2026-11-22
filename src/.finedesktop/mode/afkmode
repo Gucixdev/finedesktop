@@ -1,0 +1,5 @@
+# afk mode: you are away, so nothing needs to run. Behaviour only; looks belong to the theme.
+widgets = off
+bar_interval = 30
+enter = command -v playerctl >/dev/null && playerctl pause
+leave = true

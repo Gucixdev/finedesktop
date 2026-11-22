@@ -1,0 +1,3 @@
+# night mode (optional example): a mode may also change the look, here by switching theme.
+theme = zen
+bar_interval = 5

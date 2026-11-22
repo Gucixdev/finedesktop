@@ -31,6 +31,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sock = ipc::init(&event_loop.handle(), &state.socket_name.to_string_lossy())?;
     unsafe { std::env::set_var("FD_SOCK", &sock) };
 
+    // once a second: redraw the bar when its interval is due, fire the `minute` event on the minute change
+    {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        let (mut last_min, mut tick) = (String::new(), 0u64);
+        event_loop.handle().insert_source(Timer::from_duration(std::time::Duration::from_secs(1)), move |_, _, st| {
+            tick += 1;
+            if tick % st.config.bar_interval.max(1) == 0 {
+                st.bar_dirty = true;
+            }
+            let hm = components::widgets::now("%H:%M");
+            if hm != last_min {
+                if !last_min.is_empty() {
+                    st.emit(components::hooks::Event::minute(&hm));
+                }
+                last_min = hm;
+            }
+            TimeoutAction::ToDuration(std::time::Duration::from_secs(1))
+        })?;
+    }
+    state.widgets.configure(&state.config);
+    state.emit(components::hooks::Event::start());
     for cmd in state.config.exec.clone() {
         keys::spawn(&cmd);
     }

@@ -860,6 +860,7 @@ name = "finedesktop"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "libc",
  "smithay",
  "tracing",
  "tracing-subscriber",

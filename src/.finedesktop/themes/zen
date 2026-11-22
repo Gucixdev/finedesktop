@@ -1,0 +1,14 @@
+# zen: black, one grey, no animations, no decoration
+bg = #000000
+fg = #cfcfcf
+dim = #5a5a5a
+accent = #ffffff
+urgent = #ffffff
+bar_bg = #000000
+sel_bg = #1c1c1c
+sel_fg = #ffffff
+border_normal = #1c1c1c
+border_focus = #8a8a8a
+border = 1
+gap = 0
+animations = off

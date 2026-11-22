@@ -1,0 +1,13 @@
+bg = #282a36
+fg = #f8f8f2
+dim = #6272a4
+accent = #bd93f9
+urgent = #ff5555
+bar_bg = #21222c
+sel_bg = #bd93f9
+sel_fg = #282a36
+border_normal = #44475a
+border_focus = #bd93f9
+border = 2
+gap = 6
+animations = on

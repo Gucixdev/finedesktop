@@ -1,0 +1,3 @@
+# day mode (optional example): back to a light look.
+theme = official-light
+bar_interval = 1

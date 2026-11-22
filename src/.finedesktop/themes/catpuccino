@@ -1,0 +1,14 @@
+# catppuccin mocha
+bg = #1e1e2e
+fg = #cdd6f4
+dim = #6c7086
+accent = #cba6f7
+urgent = #f38ba8
+bar_bg = #181825
+sel_bg = #cba6f7
+sel_fg = #11111b
+border_normal = #313244
+border_focus = #cba6f7
+border = 2
+gap = 6
+animations = on
