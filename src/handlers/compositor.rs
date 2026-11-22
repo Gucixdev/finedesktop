@@ -37,6 +37,7 @@ impl CompositorHandler for Desktop {
             }
         };
 
+        self.layer_commit(surface);
         let window = self.find_window(surface).and_then(|l| self.window_at(l).cloned());
         xdg_shell::handle_commit(&mut self.popups, window, surface);
         resize_grab::handle_commit(&mut self.space, surface);

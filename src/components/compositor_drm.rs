@@ -282,6 +282,7 @@ fn render_with(state: &mut Desktop, d: &mut Drm, crtc: crtc::Handle) {
 
     let t = state.start_time.elapsed();
     state.space.elements().for_each(|w| w.send_frame(&output, t, Some(Duration::ZERO), |_, _| Some(output.clone())));
+    state.layer_frames(&output, t);
     state.space.refresh();
     state.popups.cleanup();
     let _ = state.display_handle.flush_clients();

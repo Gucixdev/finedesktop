@@ -66,13 +66,13 @@ impl Desktop {
         let mut one = |name: &str, out: &mut Vec<Item>| match name {
             "tags" => {
                 for (i, ws) in m.ws.iter().enumerate() {
-                    let label = format!(" {} ", i + 1);
+                    // the open workspace is shown as >n<, the others as " n "
                     if i == m.cur {
-                        out.push(Item { text: label, fg: t.sel_fg, bg: Some(t.sel_bg) });
+                        out.push(Item { text: format!(">{}<", i + 1), fg: t.sel_fg, bg: Some(t.sel_bg) });
                     } else if !ws.clients.is_empty() {
-                        out.push(it(label, t.fg));
+                        out.push(it(format!(" {} ", i + 1), t.fg));
                     } else {
-                        out.push(it(label, t.dim));
+                        out.push(it(format!(" {} ", i + 1), t.dim));
                     }
                 }
             }
@@ -80,9 +80,9 @@ impl Desktop {
             "cpu" => out.push(it(format!("cpu {}%", sh.cpu), t.fg)),
             "ram" => out.push(it(format!("ram {}%", sh.ram), t.fg)),
             "|" => out.push(it("|", t.dim)),
-            "vol" => {
+            "spk" | "vol" => {
                 if let Some((v, muted)) = sh.vol {
-                    out.push(it(if muted { "vol mute".to_string() } else { format!("vol {v}%") }, if muted { t.dim } else { t.fg }));
+                    out.push(it(if muted { "spk mute".to_string() } else { format!("spk {v}%") }, if muted { t.dim } else { t.fg }));
                 }
             }
             "mic" => {
@@ -105,8 +105,8 @@ impl Desktop {
                     out.push(it(format!("bat {p}%{}", if chg { "+" } else { "" }), if p <= 15 && !chg { t.urgent } else { t.fg }));
                 }
             }
-            "date" => out.push(it(widgets::now("%Y-%m-%d %a"), t.fg)),
-            "clock" | "time" => out.push(it(widgets::now("%H:%M:%S"), t.accent)),
+            "date" => out.push(it(widgets::now("%Y-%m-%d"), t.fg)),
+            "clock" | "time" => out.push(it(widgets::now("%H:%M"), t.accent)),
             other => {
                 if let Some(txt) = sh.text.get(other).filter(|s| !s.is_empty()) {
                     let (fg, txt) = match txt.split_once(' ') {
@@ -230,8 +230,12 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             let mut rx = w;
             for i in right.iter().rev() {
                 let tw = i.text.chars().count() as i32 * cw;
-                rx -= tw + pad * 2;
-                cv.text(rx + pad, ty, &i.text, i.fg, scale, w);
+                let slot = tw + if i.bg.is_some() { 0 } else { pad * 2 };
+                rx -= slot;
+                if let Some(bg) = i.bg {
+                    cv.rect(rx, 0, slot, bh, bg);
+                }
+                cv.text(rx + if i.bg.is_some() { 0 } else { pad }, ty, &i.text, i.fg, scale, w);
             }
             cv.rect(0, if pos == BarPos::Top { bh - 1 } else { 0 }, w, 1, t.border_normal);
         });

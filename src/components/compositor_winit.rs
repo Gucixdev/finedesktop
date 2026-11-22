@@ -94,6 +94,7 @@ pub fn init_winit(
                     )
                 });
 
+                state.layer_frames(&output, state.start_time.elapsed());
                 state.space.refresh();
                 state.popups.cleanup();
                 let _ = state.display_handle.flush_clients();

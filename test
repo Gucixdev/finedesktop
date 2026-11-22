@@ -15,7 +15,7 @@ bad() { echo "FAIL $1"; fail=1; }
 # own config dir: never the user's autostart, and the real pointer must not move focus
 mkdir -p "$log/cfg"; printf 'focus_follows_mouse = off\n' > "$log/cfg/config"
 touch "$log/start"; sleep 0.05
-FD_CONFIG_DIR="$log/cfg" "$bin" >"$log/c.log" 2>&1 &
+FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" "$bin" >"$log/c.log" 2>&1 &
 cpid=$!
 trap 'kill $cpid 2>/dev/null; wait $cpid 2>/dev/null' EXIT
 

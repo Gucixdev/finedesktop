@@ -55,6 +55,9 @@ pub struct Desktop {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
+    pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
+    /// layer surface (launcher) that holds the keyboard until it goes away
+    pub layer_focus: Option<WlSurface>,
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Desktop>,
@@ -102,6 +105,7 @@ impl Desktop {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let xdg_decoration_state = smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
+        let layer_shell_state = smithay::wayland::shell::wlr_layer::WlrLayerShellState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let popups = PopupManager::default();
 
@@ -149,6 +153,8 @@ impl Desktop {
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
+            layer_shell_state,
+            layer_focus: None,
             shm_state,
             output_manager_state,
             seat_state,
@@ -214,11 +220,16 @@ impl Desktop {
     }
 
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space.element_under(pos).and_then(|(window, location)| {
+        use smithay::wayland::shell::wlr_layer::Layer;
+        if let Some(h) = self.layer_surface_under(pos, [Layer::Overlay, Layer::Top]) {
+            return Some(h);
+        }
+        let win = self.space.element_under(pos).and_then(|(window, location)| {
             window
                 .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
                 .map(|(s, p)| (s, (p + location).to_f64()))
-        })
+        });
+        win.or_else(|| self.layer_surface_under(pos, [Layer::Bottom, Layer::Background]))
     }
 }
 
@@ -435,7 +446,10 @@ impl Desktop {
     pub fn refocus(&mut self) {
         self.retile();
         self.diff_events();
-        let surf = self.focused().and_then(|(_, w)| w.toplevel().map(|t| t.wl_surface().clone()));
+        if self.layer_focus.as_ref().is_some_and(|s| !smithay::reexports::wayland_server::Resource::is_alive(s)) {
+            self.layer_focus = None;
+        }
+        let surf = self.layer_focus.clone().or_else(|| self.focused().and_then(|(_, w)| w.toplevel().map(|t| t.wl_surface().clone())));
         if let Some(w) = self.focused().map(|(_, w)| w.clone()) {
             self.space.raise_element(&w, false);
         }
