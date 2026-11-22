@@ -31,6 +31,8 @@ fn menu_key(sym: smithay::input::keyboard::Keysym, ctrl: bool) -> String {
         0xff1b => "key esc".into(),
         0xff0d | 0xff8d => "key enter".into(),
         0xff08 => "key backspace".into(),
+        0xff51 => "key left".into(),
+        0xff53 => "key right".into(),
         0xff52 => "key up".into(),
         0xff54 | 0xff09 => "key down".into(),
         0xff55 => "key pageup".into(),

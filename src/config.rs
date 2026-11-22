@@ -62,6 +62,8 @@ pub enum Action {
     SendMon(Dir),
     /// true: as JSON
     State(bool),
+    /// `log [N]`: the last N log lines
+    Log(String),
     Vt(u8),
     /// `theme NAME`, `theme list`
     Theme(String),
@@ -216,6 +218,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "prefer" => Action::Prefer(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State(rest == "json"),
+        "log" => Action::Log(rest.into()),
         "screenshot" => Action::Screenshot(rest.into()),
         "screenrecord" => Action::Screenrecord(rest.into()),
         "zoom" => Action::Zoom,

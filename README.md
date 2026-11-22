@@ -18,6 +18,7 @@ Layouts parked for later live in `src/unused/screen_mode/`.
 | key | action |
 |---|---|
 | Mod+Return / Mod+W | terminal (`$TERMINAL`, default foot) / menu (`$FD_MENU`) |
+| Mod+P | launcher (dmenu-style: apps + PATH, Left/Right = back/in, unmatched text runs as typed) |
 | Mod+Q, Mod+Shift+C | close focused |
 | Mod+Shift+Q | quit |
 | Mod+J / Mod+K | focus next / previous |
@@ -49,3 +50,10 @@ Config dir: `$FD_CONFIG_DIR` or `~/.config/finedesktop/`: `config`, `themes/NAME
 started in the background with `FD_*` variables), `widgets/NAME` (executable, shown in the bar when its name is in
 `bar_left` / `bar_right`), `segment = NAME SECONDS COMMAND` in the config. Examples are in `examples/`.
 A theme is a separate setting from a mode: a theme is how it looks, a mode is how the system behaves.
+
+## Menu and logs
+
+`Mod+W` opens one centred list: Aplikacje (Natywne, Flatpak and Gry as sections of the same list), Gry, Schowek,
+Kalkulator, Ustawienia. Type filters, Left goes back (clears the query first), Right/Enter goes in.
+`ctl menu launch` is the launcher. `ctl log [N]` prints the last N log lines (also kept in
+`~/.local/state/finedesktop/log`); every action, from a key, `ctl` or a hook, is logged as `action: ...`.

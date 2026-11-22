@@ -13,3 +13,5 @@ pub mod calc;
 pub mod settings;
 pub mod welcome;
 pub mod capture;
+pub mod log;
+pub mod launcher;

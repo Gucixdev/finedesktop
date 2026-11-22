@@ -10,9 +10,8 @@ use crate::Desktop;
 pub enum Id {
     Root,
     Apps,
-    Native,
-    Flatpak,
     AllApps,
+    Run,
     Games,
     Clip,
     Calc,
@@ -28,9 +27,9 @@ impl Id {
         Some(match s {
             "" | "root" | "main" => Id::Root,
             "apps" => Id::Apps,
-            "native" => Id::Native,
-            "flatpak" => Id::Flatpak,
+            "native" | "flatpak" => Id::Apps,
             "all" => Id::AllApps,
+            "run" | "launcher" => Id::Run,
             "games" => Id::Games,
             "clip" | "clipboard" => Id::Clip,
             "calc" => Id::Calc,
@@ -47,9 +46,8 @@ impl Id {
         match self {
             Id::Root => "Menu",
             Id::Apps => "Aplikacje",
-            Id::Native => "Natywne",
-            Id::Flatpak => "Flatpak",
             Id::AllApps => "Wszystkie",
+            Id::Run => "Uruchom",
             Id::Games => "Gry",
             Id::Clip => "Schowek",
             Id::Calc => "Kalkulator",
@@ -79,6 +77,8 @@ pub enum Act {
     ReloadEngine,
     EditConfig,
     Nop,
+    /// a section title in a list: drawn, never selected
+    Head,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +93,13 @@ pub struct Level {
     pub items: Vec<Entry>,
 }
 
+/// One drawn line of the list.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Row {
+    Head(String),
+    Item(String),
+}
+
 #[derive(Debug, Default)]
 pub struct Menu {
     pub stack: Vec<Level>,
@@ -104,12 +111,41 @@ fn e(label: &str, act: Act) -> Entry {
     Entry { label: label.into(), act }
 }
 
-fn app_entries(f: impl Fn(&apps::App) -> bool) -> Vec<Entry> {
-    apps::scan()
-        .into_iter()
-        .filter(|a| f(a))
-        .map(|a| Entry { label: a.name, act: Act::Run { cmd: a.exec, terminal: a.terminal } })
-        .collect()
+fn head(label: &str) -> Entry {
+    Entry { label: label.into(), act: Act::Head }
+}
+
+/// Every wanted app in ONE list, under a title per kind that has any entries.
+fn grouped(kinds: &[(&str, fn(&apps::App) -> bool)]) -> Vec<Entry> {
+    let all = apps::scan();
+    let mut out = Vec::new();
+    for (title, f) in kinds {
+        let mut part: Vec<Entry> = all.iter().filter(|a| f(a)).map(|a| Entry { label: a.name.clone(), act: Act::Run { cmd: a.exec.clone(), terminal: a.terminal } }).collect();
+        if !part.is_empty() {
+            out.push(head(title));
+            out.append(&mut part);
+        }
+    }
+    out
+}
+
+fn is_native(a: &apps::App) -> bool {
+    !a.game && !a.flatpak
+}
+fn is_flatpak(a: &apps::App) -> bool {
+    !a.game && a.flatpak
+}
+fn is_game(a: &apps::App) -> bool {
+    a.game
+}
+fn is_game_native(a: &apps::App) -> bool {
+    a.game && !a.flatpak
+}
+fn is_game_flatpak(a: &apps::App) -> bool {
+    a.game && a.flatpak
+}
+fn any_app(_: &apps::App) -> bool {
+    true
 }
 
 fn clip_entries() -> Vec<Entry> {
@@ -134,11 +170,14 @@ impl Desktop {
                 e("Kalkulator", Act::Open(Id::Calc)),
                 e("Ustawienia", Act::Open(Id::Settings)),
             ],
-            Id::Apps => vec![e("Natywne", Act::Open(Id::Native)), e("Flatpak", Act::Open(Id::Flatpak)), e("Wszystkie", Act::Open(Id::AllApps))],
-            Id::Native => app_entries(|a| !a.game && !a.flatpak),
-            Id::Flatpak => app_entries(|a| !a.game && a.flatpak),
-            Id::AllApps => app_entries(|a| !a.game),
-            Id::Games => app_entries(|a| a.game),
+            Id::Apps | Id::AllApps => grouped(&[("Natywne", is_native), ("Flatpak", is_flatpak), ("Gry", is_game)]),
+            Id::Games => grouped(&[("Natywne", is_game_native), ("Flatpak", is_game_flatpak)]),
+            Id::Run => {
+                let mut v = grouped(&[("Aplikacje", any_app)]);
+                v.push(head("Polecenia"));
+                v.extend(super::launcher::commands().into_iter().map(|c| Entry { label: c.clone(), act: Act::Run { cmd: c, terminal: false } }));
+                v
+            }
             Id::Clip => clip_entries(),
             Id::Calc => vec![e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop)],
             Id::Settings => vec![
@@ -167,6 +206,12 @@ impl Desktop {
         Level { id, items }
     }
 
+    /// The launcher: just this level, so backspace on an empty query closes it, like dmenu.
+    pub fn menu_launch(&mut self) {
+        self.menu = Some(Menu { stack: vec![self.menu_level(Id::Run)], ..Menu::default() });
+        self.bar_dirty = true;
+    }
+
     pub fn menu_open(&mut self, id: Id) {
         // opening a sub-menu directly still has the main menu under it, so backspace goes up
         let mut stack = vec![self.menu_level(Id::Root)];
@@ -183,19 +228,62 @@ impl Menu {
         self.stack.last().expect("a menu always has a level")
     }
 
-    /// Indices of the entries matching every word of the query (case-insensitive); prefix matches first.
+    /// Indices of the selectable entries matching every word of the query (case-insensitive); inside a section the
+    /// prefix matches come first, sections keep their order.
     pub fn visible(&self) -> Vec<usize> {
+        let items = &self.level().items;
         if self.level().id == Id::Calc {
-            return (0..self.level().items.len()).collect(); // the query is an expression here, not a filter
+            return (0..items.len()).collect(); // the query is an expression here, not a filter
         }
         let q = self.query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
-        let items = &self.level().items;
-        let mut v: Vec<usize> = (0..items.len()).filter(|&i| words.iter().all(|w| items[i].label.to_lowercase().contains(w))).collect();
-        if let Some(first) = words.first() {
-            v.sort_by_key(|&i| !items[i].label.to_lowercase().starts_with(first));
+        let mut group = 0usize;
+        let mut v: Vec<(usize, bool, usize)> = Vec::new();
+        for (i, it) in items.iter().enumerate() {
+            if matches!(it.act, Act::Head) {
+                group += 1;
+                continue;
+            }
+            let l = it.label.to_lowercase();
+            if words.iter().all(|w| l.contains(w)) {
+                v.push((group, !words.first().is_some_and(|f| l.starts_with(f)), i));
+            }
         }
-        v
+        v.sort_by_key(|&(g, p, _)| (g, p));
+        v.into_iter().map(|x| x.2).collect()
+    }
+
+    /// What to draw: section titles between the visible entries, and which row is selected.
+    pub fn rows(&self) -> (Vec<Row>, usize) {
+        let items = &self.level().items;
+        let mut head_of: Vec<Option<&str>> = Vec::with_capacity(items.len());
+        let mut cur = None;
+        for it in items {
+            if matches!(it.act, Act::Head) {
+                cur = Some(it.label.as_str());
+            }
+            head_of.push(cur);
+        }
+        let vis = self.visible();
+        let sel = self.sel.min(vis.len().saturating_sub(1));
+        let (mut rows, mut last, mut sel_row) = (Vec::new(), None, 0);
+        for (n, &i) in vis.iter().enumerate() {
+            if head_of[i] != last {
+                last = head_of[i];
+                if let Some(h) = last {
+                    rows.push(Row::Head(h.to_string()));
+                }
+            }
+            if n == sel {
+                sel_row = rows.len();
+            }
+            rows.push(Row::Item(items[i].label.clone()));
+        }
+        (rows, sel_row)
+    }
+
+    pub fn selectable(&self) -> usize {
+        self.level().items.iter().filter(|i| !matches!(i.act, Act::Head)).count()
     }
 
     /// "Menu > Aplikacje > Flatpak"
@@ -225,11 +313,15 @@ impl Desktop {
                         self.menu_open(id);
                         "ok".into()
                     }
-                    None => "error: menu open root|apps|native|flatpak|all|games|clip|calc|settings|themes|modes|layouts".into(),
+                    None => "error: menu open root|apps|games|clip|calc|settings|themes|modes|layouts, or menu launch".into(),
                 };
             }
             "close" => {
                 self.menu = None;
+                return "ok".into();
+            }
+            "launch" | "run" => {
+                self.menu_launch();
                 return "ok".into();
             }
             _ => {}
@@ -238,8 +330,14 @@ impl Desktop {
         let vis = menu.visible();
         match verb {
             "list" => {
-                let items = &menu.level().items;
-                return std::iter::once(menu.crumbs()).chain(vis.iter().enumerate().map(|(n, &i)| format!("{}{}", if n == menu.sel { "> " } else { "  " }, items[i].label))).collect::<Vec<_>>().join("\n");
+                let (rows, sel) = menu.rows();
+                return std::iter::once(menu.crumbs())
+                    .chain(rows.iter().enumerate().map(|(n, r)| match r {
+                        Row::Head(h) => format!("-- {h}"),
+                        Row::Item(l) => format!("{}{l}", if n == sel { "> " } else { "  " }),
+                    }))
+                    .collect::<Vec<_>>()
+                    .join("\n");
             }
             "type" => {
                 menu.query.push_str(rest);
@@ -257,6 +355,18 @@ impl Desktop {
                 "pageup" => menu.sel = menu.sel.saturating_sub(10),
                 "pagedown" => menu.sel = (menu.sel + 10).min(vis.len().saturating_sub(1)),
                 "esc" => self.menu = None,
+                // Left: one step back (the query first, then the level); Right: go in
+                "back" | "left" => {
+                    if !menu.query.is_empty() {
+                        menu.query.clear();
+                        menu.sel = 0;
+                        self.menu_recalc();
+                    } else if menu.stack.len() > 1 {
+                        menu.stack.pop();
+                        menu.sel = 0;
+                    }
+                }
+                "right" => return self.menu_enter(),
                 "backspace" => {
                     if menu.query.pop().is_some() {
                         menu.sel = 0;
@@ -270,8 +380,8 @@ impl Desktop {
                 "enter" => return self.menu_enter(),
                 other => return format!("error: unknown menu key {other:?}"),
             },
-            "up" | "down" | "enter" | "back" | "esc" | "backspace" => return self.menu_cmd(&format!("key {verb}")),
-            _ => return format!("error: unknown menu command {verb:?} (open, close, toggle, list, type TEXT, key up|down|enter|back|esc|space)"),
+            "up" | "down" | "left" | "right" | "enter" | "back" | "esc" | "backspace" => return self.menu_cmd(&format!("key {verb}")),
+            _ => return format!("error: unknown menu command {verb:?} (open, launch, close, toggle, list, type TEXT, key up|down|enter|back|esc|space)"),
         }
         "ok".into()
     }
@@ -297,7 +407,16 @@ impl Desktop {
     fn menu_enter(&mut self) -> String {
         let Some(menu) = self.menu.as_ref() else { return "error: menu is not open".into() };
         let vis = menu.visible();
-        let Some(&i) = vis.get(menu.sel.min(vis.len().saturating_sub(1))) else { return "error: nothing to select".into() };
+        let Some(&i) = vis.get(menu.sel.min(vis.len().saturating_sub(1))) else {
+            // dmenu_run: what was typed is the command when nothing matches
+            if menu.level().id == Id::Run && !menu.query.trim().is_empty() {
+                let cmd = menu.query.trim().to_string();
+                self.menu = None;
+                crate::keys::spawn(&cmd);
+                return "ok".into();
+            }
+            return "error: nothing to select".into();
+        };
         let entry = menu.level().items[i].clone();
         if let Act::Open(id) = entry.act {
             let level = self.menu_level(id);
@@ -319,7 +438,7 @@ impl Desktop {
             menu.sel = 0;
             return "ok".into();
         }
-        if matches!(entry.act, Act::Nop) {
+        if matches!(entry.act, Act::Nop | Act::Head) {
             return "ok".into();
         }
         self.menu = None;
@@ -362,7 +481,7 @@ impl Desktop {
                 crate::keys::spawn(&format!("{term} -e sh -c '${{EDITOR:-frost}} \"{path}\"'"));
                 "ok".into()
             }
-            Act::Open(_) | Act::PickPrefer(_) | Act::Nop => "ok".into(),
+            Act::Open(_) | Act::PickPrefer(_) | Act::Nop | Act::Head => "ok".into(),
         }
     }
 }

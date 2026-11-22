@@ -709,6 +709,9 @@ impl Desktop {
     }
 
     pub fn run_action(&mut self, a: Action) -> String {
+        if !matches!(a, Action::Log(_) | Action::State(_)) {
+            tracing::info!("action: {a:?}");
+        }
         let n_mon = self.mons.len();
         if n_mon == 0 {
             return "error: no output".into();
@@ -748,6 +751,7 @@ impl Desktop {
             }
             Action::State(true) => return self.report_json(),
             Action::State(false) => return self.report(),
+            Action::Log(n) => return crate::components::log::tail(&n),
             Action::Theme(name) => return self.set_theme(&name),
             Action::Mode(name) => return self.set_mode(&name),
             Action::Emit(text) => {
