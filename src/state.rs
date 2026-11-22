@@ -86,7 +86,7 @@ pub struct Desktop {
     /// the window focused now and the one before it (`focus last`)
     pub last_win: Option<Window>,
     pub prev_win: Option<Window>,
-    pub panels: Vec<crate::components::engine::widget_engine::Panel>,
+    pub welcome: crate::components::welcome::Welcome,
     /// None: the panels show on empty workspaces; Some: forced on or off with `welcome`
     pub panel_show: Option<bool>,
     pub bar_cache: std::collections::HashMap<String, (u64, smithay::backend::renderer::element::memory::MemoryRenderBuffer)>,
@@ -177,7 +177,7 @@ impl Desktop {
             last_focus: None,
             last_win: None,
             prev_win: None,
-            panels: Vec::new(),
+            welcome: Default::default(),
             panel_show: None,
             bar_cache: Default::default(),
             solid_ids: Default::default(),
@@ -320,23 +320,6 @@ impl Desktop {
             crate::config::BarPos::Off => {}
         }
         Some(r)
-    }
-
-    /// Re-read the panels (key list, markdown files); redraw only when something changed.
-    pub fn reload_panels(&mut self) {
-        let p = crate::components::engine::widget_engine::load(&self.config);
-        if p != self.panels {
-            self.panels = p;
-            self.bar_dirty = true;
-        }
-    }
-
-    /// Panels are visible when forced on, or when automatic and monitor `mi` shows an empty workspace.
-    pub fn panel_visible(&self, mi: usize) -> bool {
-        if !self.config.panels || self.panels.is_empty() {
-            return false;
-        }
-        self.panel_show.unwrap_or_else(|| self.mons.get(mi).is_some_and(|m| m.ws[m.cur].clients.is_empty()))
     }
 
     /// Tell the widget worker what the config wants (segments, interval, on/off) and redraw the bar.
@@ -768,17 +751,7 @@ impl Desktop {
                 let (name, rest) = text.split_once(' ').unwrap_or((text.as_str(), ""));
                 self.emit(crate::components::hooks::Event::user(name, rest));
             }
-            Action::Panel(how) => {
-                match how.as_str() {
-                    "toggle" => self.panel_show = Some(!self.panel_visible(mi)),
-                    "show" | "on" => self.panel_show = Some(true),
-                    "hide" | "off" => self.panel_show = Some(false),
-                    "auto" => self.panel_show = None,
-                    "reload" => self.reload_panels(),
-                    _ => return "error: welcome toggle|show|hide|auto|reload".into(),
-                }
-                self.bar_dirty = true;
-            }
+            Action::Panel(how) => return self.welcome_cmd(&how),
             Action::Bar(how) => {
                 use crate::config::BarPos;
                 let c = &mut self.config;

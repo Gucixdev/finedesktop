@@ -11,3 +11,4 @@ pub mod apps;
 pub mod menu;
 pub mod calc;
 pub mod settings;
+pub mod welcome;

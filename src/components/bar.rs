@@ -246,19 +246,18 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
     }
     // panels: key list and markdown widgets, on empty workspaces (or when forced with `welcome show`)
     if state.panel_visible(mi) {
-        let top = if pos == BarPos::Top { bh } else { 0 };
-        let bottom = if pos == BarPos::Bottom { bh } else { 0 };
-        let m = 16 * scale;
-        let (w, h) = (geo.size.w - 2 * m, geo.size.h - top - bottom - 2 * m);
-        if w > 80 && h > 32 {
+        if let Some((x, y, w, h)) = state.panel_rect(mi) {
             let key = format!("{name}:panels");
-            let hash = hash_of(&(&state.panels, w, h, t.name.clone(), scale));
-            let (panels, th) = (state.panels.clone(), t.clone());
+            let wl = &state.welcome;
+            let hash = hash_of(&(&wl.docs, &wl.cur, wl.scroll, wl.sel, wl.back.len(), wl.fwd.len(), w, h, t.name.clone(), scale));
+            let th = t.clone();
+            let wl = std::mem::take(&mut state.welcome);
             let buf = state.cached(key, w, h, hash, |cv| {
                 cv.rect(0, 0, w, h, th.bg);
-                super::engine::widget_engine::render(&panels, cv, &th, scale);
+                crate::components::welcome::render(&wl, cv, &th, scale);
             });
-            if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (m as f64, (top + m) as f64), &buf, None, None, None, Kind::Unspecified) {
+            state.welcome = wl;
+            if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (x as f64, y as f64), &buf, None, None, None, Kind::Unspecified) {
                 out.push(e.into());
             }
         }

@@ -68,6 +68,12 @@ impl Desktop {
                             return FilterResult::Forward;
                         }
                         let sym = handle.raw_latin_sym_or_raw_current_sym().map_or(0, |s| s.raw());
+                        // the welcome widget reads plain keys when it is showing and no window has focus
+                        if !mods.logo && !mods.ctrl && !mods.alt && state.welcome_active() {
+                            if let Some(c) = crate::components::welcome::key_cmd(handle.modified_sym().raw(), mods.shift) {
+                                return FilterResult::Intercept(crate::config::Action::Panel(c.into()));
+                            }
+                        }
                         // XF86Switch_VT_1..12 (ctrl+alt+Fn)
                         if (0x1008FE01..=0x1008FE0C).contains(&sym) {
                             return FilterResult::Intercept(crate::config::Action::Vt((sym - 0x1008FE00) as u8));
@@ -113,7 +119,13 @@ impl Desktop {
                         .and_then(|s| self.find_window(&s));
                     match hit {
                         Some(loc) => self.focus_loc(loc),
-                        None => keyboard.set_focus(self, Option::<WlSurface>::None, serial),
+                        None => {
+                            // a left click on the welcome widget (page links, back, forward) is its own
+                            if button == 0x110 && self.welcome_click(pointer.current_location()) {
+                                return;
+                            }
+                            keyboard.set_focus(self, Option::<WlSurface>::None, serial)
+                        }
                     }
                 };
 

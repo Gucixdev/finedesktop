@@ -16,6 +16,9 @@ bad() { echo "FAIL $1"; fail=1; }
 # own config dir: never the user's autostart, and the real pointer must not move focus
 mkdir -p "$log/cfg"; cp target/release/libfinedesktop_engine.so "$log/engine.so"
 printf 'focus_follows_mouse = off\nengine = %s\n' "$log/engine.so" > "$log/cfg/config"
+mkdir -p "$log/cfg/welcome"
+printf '# Tips\n\nSee [the shell](shell.md) or [site](https://example.org) or [nowhere](missing.md).\n- one\n' > "$log/cfg/welcome/tips.md"
+printf '# Shell\n\nBack to [tips](tips.md).\n' > "$log/cfg/welcome/shell.md"
 touch "$log/start"; sleep 0.05
 FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" "$bin" >"$log/c.log" 2>&1 &
 cpid=$!
@@ -49,6 +52,16 @@ ctl theme list | grep -q 'dracula\*' && ok "mode leaves the theme alone" || bad 
 ctl mode off >/dev/null; ctl theme list | grep -q 'dracula\*' && ok "mode off restores theme" || bad "theme not restored"
 ctl theme matrix >/dev/null
 [ "$(ctl welcome show)" = ok ] && [ "$(ctl welcome hide)" = ok ] && [ "$(ctl welcome auto)" = ok ] && ok "welcome show/hide/auto" || bad "panel actions"
+ctl welcome home | grep -q ok; ctl welcome list | grep -q 'Tips' && ok "welcome home lists the pages" || bad "welcome home"
+[ "$(ctl welcome open tips)" = ok ] && ctl welcome list | grep -q '^# Tips' && ok "welcome open page" || bad "welcome open"
+ctl welcome list | grep -q '\[1\] the shell -> Shell' && ctl welcome list | grep -q '\[2\] site -> https://example.org' && ok "welcome links numbered, dead link plain" || bad "welcome links"
+ctl welcome list | grep -q 'nowhere ->' && bad "dead link listed" || ok "dead link not a link"
+[ "$(ctl welcome link 1)" = ok ] && ctl welcome list | grep -q '^# Shell' && ok "welcome link opens page" || bad "welcome link"
+[ "$(ctl welcome back)" = ok ] && ctl welcome list | grep -q '^# Tips' && ok "welcome back" || bad "welcome back"
+[ "$(ctl welcome forward)" = ok ] && ctl welcome list | grep -q '^# Shell' && ok "welcome forward" || bad "welcome forward"
+[ "$(ctl welcome next)" = ok ] && [ "$(ctl welcome follow)" = ok ] && ctl welcome list | grep -q '^# Tips' && ok "welcome next+follow" || bad "welcome follow"
+[ "$(ctl welcome open nope | cut -c1-6)" = error: ] && ok "welcome unknown page rejected" || bad "welcome unknown page"
+ctl welcome home >/dev/null
 [ "$(ctl welcome bogus | cut -c1-6)" = error: ] && ok "bad welcome action rejected" || bad "bad welcome action accepted"
 ( ctl subscribe > "$log/sub.out" 2>&1 & echo $! > "$log/sub.pid" ); sleep 0.3
 ctl emit ping hello >/dev/null; ctl bar toggle >/dev/null; ctl bar toggle >/dev/null; sleep 0.3
