@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct App {
+    /// desktop file name, e.g. `org.mozilla.firefox.desktop`
+    pub id: String,
     pub name: String,
     pub exec: String,
     pub terminal: bool,
@@ -44,7 +46,7 @@ fn strip_codes(exec: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn parse(text: &str, flatpak: bool) -> Option<App> {
+fn parse(text: &str, flatpak: bool, id: &str) -> Option<App> {
     let (mut name, mut exec, mut terminal, mut hidden, mut cats, mut app) = (None, None, false, false, String::new(), true);
     let mut inside = false;
     for line in text.lines() {
@@ -70,7 +72,7 @@ fn parse(text: &str, flatpak: bool) -> Option<App> {
     if hidden || !app {
         return None;
     }
-    Some(App { name: name?, exec: exec.filter(|e| !e.is_empty())?, terminal, flatpak, game: cats.split(';').any(|c| c == "Game") })
+    Some(App { id: id.to_string(), name: name?, exec: exec.filter(|e| !e.is_empty())?, terminal, flatpak, game: cats.split(';').any(|c| c == "Game") })
 }
 
 /// Every application once (the first directory wins), sorted by name.
@@ -81,7 +83,7 @@ pub fn scan() -> Vec<App> {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
             if e.path().extension().is_some_and(|x| x == "desktop") {
-                if let Some(a) = std::fs::read_to_string(e.path()).ok().and_then(|t| parse(&t, flatpak)) {
+                if let Some(a) = std::fs::read_to_string(e.path()).ok().and_then(|t| parse(&t, flatpak, &e.file_name().to_string_lossy())) {
                     v.push(a);
                 }
             }
@@ -98,13 +100,13 @@ mod tests {
 
     #[test]
     fn parses_an_entry_and_strips_field_codes() {
-        let a = parse("[Desktop Entry]\nType=Application\nName=Foo\nExec=foo --x %U %%\nCategories=Game;\n[Desktop Action x]\nName=Other\n", true).unwrap();
+        let a = parse("[Desktop Entry]\nType=Application\nName=Foo\nExec=foo --x %U %%\nCategories=Game;\n[Desktop Action x]\nName=Other\n", true, "foo.desktop").unwrap();
         assert_eq!((a.name.as_str(), a.exec.as_str(), a.game, a.flatpak), ("Foo", "foo --x %", true, true));
     }
 
     #[test]
     fn hidden_and_nameless_entries_are_skipped() {
-        assert!(parse("[Desktop Entry]\nType=Application\nName=A\nExec=a\nNoDisplay=true\n", false).is_none());
-        assert!(parse("[Desktop Entry]\nType=Application\nExec=a\n", false).is_none());
+        assert!(parse("[Desktop Entry]\nType=Application\nName=A\nExec=a\nNoDisplay=true\n", false, "a.desktop").is_none());
+        assert!(parse("[Desktop Entry]\nType=Application\nExec=a\n", false, "a.desktop").is_none());
     }
 }

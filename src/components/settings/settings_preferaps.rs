@@ -10,11 +10,41 @@ use crate::{Desktop, components::apps::App};
 /// The roles, in the order the menu shows them.
 pub const ROLES: [&str; 4] = ["terminal", "browser", "editor", "files"];
 
+/// Generic defaults that work anywhere: the system's own openers and `$EDITOR`. Your own choices go in your config
+/// (`prefer_browser = firefox`) or are made in the menu.
 pub fn defaults() -> BTreeMap<String, String> {
-    [("browser", "firefox"), ("editor", "foot -e frost"), ("files", "foot -e nnn")]
+    [("browser", "xdg-open https://"), ("editor", "$terminal -e ${EDITOR:-vi}"), ("files", "xdg-open .")]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
+}
+
+/// MIME types whose system default follows a role (the terminal has no standard one).
+pub fn mimes(role: &str) -> &'static [&'static str] {
+    match role {
+        "browser" => &["x-scheme-handler/http", "x-scheme-handler/https", "text/html", "application/xhtml+xml"],
+        "files" => &["inode/directory"],
+        "editor" => &["text/plain"],
+        _ => &[],
+    }
+}
+
+/// The desktop file whose command is `cmd` (as `command_for` builds it), if there is one.
+pub fn app_id_for<'a>(apps: &'a [App], cmd: &str, terminal: &str) -> Option<&'a str> {
+    let bare = cmd.strip_prefix(&format!("{terminal} -e ")).unwrap_or(cmd);
+    let first = |s: &str| s.split_whitespace().next().map(|w| w.rsplit('/').next().unwrap_or(w).to_string());
+    let want = first(bare)?;
+    apps.iter().find(|a| first(&a.exec).as_deref() == Some(want.as_str())).map(|a| a.id.as_str())
+}
+
+/// Make `id` the system default for the role's MIME types (`xdg-mime default`). Ok(false): nothing to set.
+pub fn set_system_default(role: &str, id: &str) -> Result<bool, String> {
+    let types = mimes(role);
+    if types.is_empty() {
+        return Ok(false);
+    }
+    let st = std::process::Command::new("xdg-mime").arg("default").arg(id).args(types).status().map_err(|e| format!("xdg-mime: {e}"))?;
+    if st.success() { Ok(true) } else { Err(format!("xdg-mime default {id} failed")) }
 }
 
 /// Command line that starts `app`; applications that need a terminal are wrapped in the preferred one.
@@ -72,9 +102,15 @@ impl Desktop {
         if let Err(e) = self.config.prefer_set(role, cmd) {
             return format!("error: {e}");
         }
-        match persist(&format!("prefer_{role}"), cmd) {
-            Ok(()) => "ok".into(),
-            Err(e) => format!("error: set for this session, but the config was not written: {e}"),
+        if let Err(e) = persist(&format!("prefer_{role}"), cmd) {
+            return format!("error: set for this session, but the config was not written: {e}");
+        }
+        // the system default follows when the command is a known desktop application
+        let apps = crate::components::apps::scan();
+        match app_id_for(&apps, cmd, &self.config.terminal).map(|id| (id.to_string(), set_system_default(role, id))) {
+            Some((id, Ok(true))) => format!("ok (system default: {id})"),
+            Some((_, Err(e))) => format!("ok, config written; system default not set: {e}"),
+            _ => "ok".into(),
         }
     }
 }
@@ -96,9 +132,28 @@ mod tests {
         assert_eq!(set_line("# prefer_browser = x\n", "prefer_browser", "y"), "# prefer_browser = x\nprefer_browser = y\n");
     }
 
+    fn app(id: &str, exec: &str) -> App {
+        App { id: id.into(), name: id.into(), exec: exec.into(), terminal: false, flatpak: false, game: false }
+    }
+
+    #[test]
+    fn a_command_finds_its_desktop_file() {
+        let apps = vec![app("htop.desktop", "htop"), app("org.mozilla.firefox.desktop", "/usr/bin/firefox --new-window")];
+        assert_eq!(app_id_for(&apps, "firefox", "foot"), Some("org.mozilla.firefox.desktop"));
+        assert_eq!(app_id_for(&apps, "foot -e htop", "foot"), Some("htop.desktop"));
+        assert_eq!(app_id_for(&apps, "xdg-open https://", "foot"), None);
+    }
+
+    #[test]
+    fn roles_map_to_mime_types() {
+        assert!(mimes("browser").contains(&"x-scheme-handler/https"));
+        assert_eq!(mimes("files"), ["inode/directory"]);
+        assert!(mimes("terminal").is_empty());
+    }
+
     #[test]
     fn terminal_apps_get_the_preferred_terminal() {
-        let a = App { name: "htop".into(), exec: "htop".into(), terminal: true, flatpak: false, game: false };
+        let a = App { id: "htop.desktop".into(), name: "htop".into(), exec: "htop".into(), terminal: true, flatpak: false, game: false };
         assert_eq!(command_for(&a, "foot"), "foot -e htop");
         assert_eq!(command_for(&App { terminal: false, ..a }, "foot"), "htop");
     }

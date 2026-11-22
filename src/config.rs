@@ -338,8 +338,10 @@ impl Config {
                 let (mods, k, act) = (p.next().unwrap_or(""), p.next().ok_or("bind = MODS, key, action")?, p.next().ok_or("bind = MODS, key, action")?);
                 let mods = self.parse_mods(mods)?;
                 let sym = keysym(k).ok_or_else(|| format!("unknown key {k:?}"))?;
-                let act = act.replace("$terminal", &self.terminal.clone()).replace("$menu", &self.menu.clone());
+                let act = act.to_string();
+                // the roles first: their commands may mention $terminal (the generic editor default does)
                 let act = self.prefer.iter().fold(act, |a, (role, cmd)| a.replace(&format!("${role}"), cmd));
+                let act = act.replace("$terminal", &self.terminal.clone()).replace("$menu", &self.menu.clone());
                 let action = parse_action(&act)?;
                 self.binds.retain(|b| !(b.mods == mods && b.sym == sym));
                 let mut label: Vec<&str> = Vec::new();
