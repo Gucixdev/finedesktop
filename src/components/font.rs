@@ -254,6 +254,14 @@ mod tests {
     }
 
     #[test]
+    fn the_users_templeos_bdf_loads_when_it_is_installed() {
+        let Some(path) = std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".local/share/fonts/TempleOS-Bitmap.bdf")).filter(|p| p.is_file()) else { return };
+        let f = Font::parse_bdf(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!((f.w, f.h), (8, 8));
+        assert!("aAzZ09".chars().all(|c| f.map.contains_key(&c)));
+    }
+
+    #[test]
     fn text_draws_pixels_and_clips() {
         let mut c = Canvas::new(40, 16, [0, 0, 0]);
         let end = c.text(0, 0, "Hello world", [255, 255, 255], 1, 40);

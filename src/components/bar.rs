@@ -178,8 +178,8 @@ impl Desktop {
                     out.push(it(format!("! {}", n.text.chars().take(60).collect::<String>()), t.urgent));
                 }
             }
-            "date" => out.push(it(widgets::now("%Y-%m-%d"), t.fg)),
-            "clock" | "time" => out.push(it(widgets::now("%H:%M"), t.accent)),
+            "date" => out.push(it(widgets::now(&c.date_format), t.fg)),
+            "clock" | "time" => out.push(it(widgets::now(&c.clock_format), t.accent)),
             other => {
                 if let Some(txt) = sh.text.get(other).filter(|s| !s.is_empty()) {
                     let (fg, txt) = match txt.split_once(' ') {

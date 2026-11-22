@@ -155,6 +155,9 @@ pub struct Config {
     pub segments: Vec<Segment>,
     /// seconds between bar refreshes (clock, cpu, ram ...)
     pub bar_interval: u64,
+    /// strftime formats of the `date` and `clock`/`time` bar widgets (`%H:%M` = no seconds)
+    pub clock_format: String,
+    pub date_format: String,
     pub font_scale: i32,
     /// `font = PATH`: a .bdf or .psf bitmap font; empty or unreadable = the built-in Terminus 8x16
     pub font: String,
@@ -208,6 +211,8 @@ impl Default for Config {
             bar_right: vec!["cpu".into(), "ram".into(), "vol".into(), "bat".into(), "clock".into()],
             segments: Vec::new(),
             bar_interval: 1,
+            clock_format: "%H:%M:%S".into(),
+            date_format: "%Y-%m-%d".into(),
             font_scale: 1,
             font: String::new(),
             tab_height: 0,
@@ -386,6 +391,8 @@ impl Config {
             },
             "bar_left" => self.bar_left = val.split_whitespace().map(String::from).collect(),
             "bar_right" => self.bar_right = val.split_whitespace().map(String::from).collect(),
+            "clock_format" if !val.is_empty() => self.clock_format = val.to_string(),
+            "date_format" if !val.is_empty() => self.date_format = val.to_string(),
             "bar_interval" => self.bar_interval = n(val)?.clamp(1, 3600) as u64,
             "font" => self.font = expand_home(val),
             "font_scale" => self.font_scale = n(val)?.clamp(1, 4),
@@ -573,6 +580,9 @@ mod tests {
         assert!(c.mouse_follows_focus && !c.tearing);
         assert!(c.apply("mouse_follows_focus = off\ntearing = on").is_empty());
         assert!(!c.mouse_follows_focus && c.tearing);
+        assert_eq!(c.clock_format, "%H:%M:%S");
+        assert!(c.apply("clock_format = %H:%M").is_empty());
+        assert_eq!(c.clock_format, "%H:%M");
         assert_eq!(c.font, "~/.local/share/fonts/Fixed6x13.bdf".replacen("~", &std::env::var("HOME").unwrap_or_default(), 1));
     }
 
