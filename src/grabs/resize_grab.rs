@@ -308,7 +308,7 @@ impl ResizeSurfaceState {
         match *self {
             Self::Resizing { edges, initial_rect } => Some((edges, initial_rect)),
             Self::WaitingForLastCommit { edges, initial_rect } => {
-                // The resize is done, let's go back to idle
+                // The resize is done, back to idle
                 *self = Self::Idle;
 
                 Some((edges, initial_rect))

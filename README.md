@@ -2,7 +2,6 @@
 
 Minimal, keyboard-first Wayland desktop in Rust on [smithay](https://github.com/Smithay/smithay).
 Smithay is vendored in `vendor/smithay` on purpose: the whole stack stays readable and patchable.
-Vision and scope: `../readme.md`.
 
 ## Run (nested in a window, for development)
 
