@@ -87,6 +87,7 @@ pub struct Desktop {
     pub last_win: Option<Window>,
     pub prev_win: Option<Window>,
     pub welcome: crate::components::welcome::Welcome,
+    pub capture: crate::components::capture::Capture,
     /// None: the panels show on empty workspaces; Some: forced on or off with `welcome`
     pub panel_show: Option<bool>,
     pub bar_cache: std::collections::HashMap<String, (u64, smithay::backend::renderer::element::memory::MemoryRenderBuffer)>,
@@ -178,6 +179,7 @@ impl Desktop {
             last_win: None,
             prev_win: None,
             welcome: Default::default(),
+            capture: Default::default(),
             panel_show: None,
             bar_cache: Default::default(),
             solid_ids: Default::default(),
@@ -753,6 +755,8 @@ impl Desktop {
                 self.emit(crate::components::hooks::Event::user(name, rest));
             }
             Action::Panel(how) => return self.welcome_cmd(&how),
+            Action::Screenshot(path) => return self.screenshot_cmd(&path),
+            Action::Screenrecord(how) => return self.screenrecord_cmd(&how),
             Action::Bar(how) => {
                 use crate::config::BarPos;
                 let c = &mut self.config;

@@ -12,3 +12,4 @@ pub mod menu;
 pub mod calc;
 pub mod settings;
 pub mod welcome;
+pub mod capture;

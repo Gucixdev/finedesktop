@@ -10,7 +10,7 @@ Smithay is vendored in `vendor/smithay` on purpose: the whole stack stays readab
 ## Layouts
 
 Pure geometry in `src/components/engine/layout_engine.rs` (unit-tested, no smithay types):
-`tile` `float` `monocle` `deck` `grid` `stack` `tab`. New layout = one enum variant + one `match` arm.
+`tile` `float` `monocle` `deck` `grid` `stack` `tab` `spiral` (Fibonacci; `mfact 0.62` is the golden one). New layout = one enum variant + one `match` arm.
 Layouts parked for later live in `src/unused/screen_mode/`.
 
 ## Keys (Mod = Super, or Alt with `FD_MOD=alt`)
@@ -23,7 +23,7 @@ Layouts parked for later live in `src/unused/screen_mode/`.
 | Mod+J / Mod+K | focus next / previous |
 | Mod+Shift+Return | move focused to master |
 | Mod+Space / Mod+Shift+Space | next / previous layout |
-| Mod+T F M D G S Y | tile float monocle deck grid stack tab |
+| Mod+T F M D G S Y R | tile float monocle deck grid stack tab spiral |
 | Mod+H / Mod+L | master width - / + |
 | Mod+I / Mod+Shift+I | more / fewer masters |
 

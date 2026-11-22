@@ -30,10 +30,11 @@ pub enum Layout {
     Grid,
     Stack,
     Tab,
+    Spiral,
 }
 
 impl Layout {
-    pub const ALL: [Layout; 7] = [
+    pub const ALL: [Layout; 8] = [
         Layout::Tile,
         Layout::Float,
         Layout::Monocle,
@@ -41,6 +42,7 @@ impl Layout {
         Layout::Grid,
         Layout::Stack,
         Layout::Tab,
+        Layout::Spiral,
     ];
 
     pub fn name(self) -> &'static str {
@@ -52,6 +54,7 @@ impl Layout {
             Layout::Grid => "grid",
             Layout::Stack => "stack",
             Layout::Tab => "tab",
+            Layout::Spiral => "spiral",
         }
     }
 
@@ -122,6 +125,7 @@ pub fn arrange(layout: Layout, area: Rect, n: usize, focused: usize, p: &Params)
         Layout::Float => Plan { slots: vec![None; n], bar: None },
         Layout::Tile => shown(tile(area, n, p)),
         Layout::Grid => shown(grid(area, n, p.gap)),
+        Layout::Spiral => shown(spiral(area, n, p)),
         Layout::Monocle => one_visible(area, n, focused, p.gap, None),
         Layout::Deck => deck(area, n, focused, p),
         Layout::Tab => bar_layout(area, n, focused, p, BarKind::Tabs),
@@ -140,6 +144,41 @@ fn tile(area: Rect, n: usize, p: &Params) -> Vec<Rect> {
     let mut out = Vec::with_capacity(n);
     column(&mut out, Rect { w: mw, ..area }, nmaster, p.gap);
     column(&mut out, Rect { x: area.x + mw, w: area.w - mw, ..area }, n - nmaster, p.gap);
+    out
+}
+
+/// Fibonacci spiral: window i takes `mfact` of what is left, cutting from the left, top, right, bottom in turn, so
+/// the cells wind inwards; the last window gets the remainder. mfact 0.62 is the golden spiral.
+fn spiral(area: Rect, n: usize, p: &Params) -> Vec<Rect> {
+    let f = p.mfact.clamp(0.1, 0.9);
+    let mut rest = area;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        if i == n - 1 {
+            out.push(pad(rest, p.gap));
+            break;
+        }
+        let (cell, left) = match i % 4 {
+            0 => {
+                let w = (rest.w as f32 * f) as i32;
+                (Rect { w, ..rest }, Rect { x: rest.x + w, w: rest.w - w, ..rest })
+            }
+            1 => {
+                let h = (rest.h as f32 * f) as i32;
+                (Rect { h, ..rest }, Rect { y: rest.y + h, h: rest.h - h, ..rest })
+            }
+            2 => {
+                let w = (rest.w as f32 * f) as i32;
+                (Rect { x: rest.x + rest.w - w, w, ..rest }, Rect { w: rest.w - w, ..rest })
+            }
+            _ => {
+                let h = (rest.h as f32 * f) as i32;
+                (Rect { y: rest.y + rest.h - h, h, ..rest }, Rect { h: rest.h - h, ..rest })
+            }
+        };
+        out.push(pad(cell, p.gap));
+        rest = left;
+    }
     out
 }
 
@@ -245,6 +284,22 @@ mod tests {
     fn empty_for_every_layout() {
         for l in Layout::ALL {
             assert!(arrange(l, A, 0, 0, &p()).slots.is_empty(), "{l:?}");
+        }
+    }
+
+    #[test]
+    fn spiral_winds_inwards_and_covers_the_area() {
+        let params = Params { gap: 0, mfact: 0.5, ..p() };
+        let r = rects(&arrange(Layout::Spiral, A, 5, 0, &params));
+        assert_eq!(r.len(), 5);
+        assert_eq!(r[0], Rect { x: 0, y: 0, w: A.w / 2, h: A.h }); // left half
+        assert_eq!(r[1], Rect { x: A.w / 2, y: 0, w: A.w / 2, h: A.h / 2 }); // then top of the rest
+        let area: i64 = r.iter().map(|c| c.w as i64 * c.h as i64).sum();
+        assert_eq!(area, A.w as i64 * A.h as i64, "cells tile the area exactly");
+        for (i, a) in r.iter().enumerate() {
+            for b in &r[i + 1..] {
+                assert!(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "{a:?} overlaps {b:?}");
+            }
         }
     }
 

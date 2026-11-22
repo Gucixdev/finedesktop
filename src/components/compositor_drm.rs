@@ -251,6 +251,8 @@ fn render_with(state: &mut Desktop, d: &mut Drm, crtc: crtc::Handle) {
     let output = head.output.clone();
     let Some(geo) = state.space.output_geometry(&output) else { return };
 
+    super::capture::service(state, &mut d.renderer, &output);
+
     let mut elements: Vec<Elem> = Vec::new();
     if geo.to_f64().contains(pointer) {
         let at = (pointer - geo.loc.to_f64()).to_physical(1.0);

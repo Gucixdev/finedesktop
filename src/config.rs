@@ -72,6 +72,8 @@ pub enum Action {
     /// `bar toggle|top|bottom|off`
     Bar(String),
     Panel(String),
+    Screenshot(String),
+    Screenrecord(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,6 +216,8 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "prefer" => Action::Prefer(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State(rest == "json"),
+        "screenshot" => Action::Screenshot(rest.into()),
+        "screenrecord" => Action::Screenrecord(rest.into()),
         "zoom" => Action::Zoom,
         "theme" if !rest.is_empty() => Action::Theme(rest.into()),
         "mode" if !rest.is_empty() => Action::Mode(rest.into()),
@@ -470,7 +474,7 @@ mod tests {
     fn default_bar_has_workspaces_left_and_status_right() {
         let mut c = Config::default();
         assert!(c.apply(DEFAULT).is_empty());
-        assert_eq!(c.bar_left, vec!["tags"]);
+        assert_eq!(c.bar_left, vec!["tags", "layout"]);
         assert_eq!(c.bar_right.first().map(String::as_str), Some("spk"));
         assert_eq!(c.bar_right.last().map(String::as_str), Some("time"));
     }

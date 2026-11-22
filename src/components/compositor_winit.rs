@@ -64,6 +64,8 @@ pub fn init_winit(
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
+                    // same bind as the frame: a second backend.bind() would lose the window surface
+                    super::capture::service(state, renderer, &output);
                     let ov = super::bar::overlay(state, renderer, &output);
                     smithay::desktop::space::render_output::<
                         _,

@@ -49,7 +49,19 @@ fn serve(stream: UnixStream, state: &mut Desktop) {
         return;
     }
     let reply = match crate::config::parse_action(&line) {
-        Ok(action) => state.run_action(action),
+        Ok(action) => {
+            let shot = matches!(action, crate::config::Action::Screenshot(_));
+            let r = state.run_action(action);
+            if shot && !r.starts_with("error") {
+                // answered by capture::service once the file is written
+                let _ = stream.set_read_timeout(None);
+                if let (Some(s), Ok(c)) = (state.capture.shots.last_mut(), stream.try_clone()) {
+                    s.reply = Some(c);
+                    return;
+                }
+            }
+            r
+        }
         Err(e) => format!("error: {e}"),
     };
     let _ = (&stream).write_all(reply.as_bytes());
