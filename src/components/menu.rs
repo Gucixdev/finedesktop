@@ -185,22 +185,42 @@ fn any_app(_: &apps::App) -> bool {
     true
 }
 
-/// Executables in `<config dir>/scripts/`: drop a file there and it is in the menu.
-fn script_entries() -> Vec<Entry> {
+/// Executables in `<config dir>/NAME/`, one entry each, labelled `PREFIX + file name`; empty when there are none.
+fn dir_entries(name: &str, prefix: &str) -> Vec<Entry> {
+    exec_entries(crate::config::config_dir().map(|d| d.join(name)).as_deref(), prefix)
+}
+
+fn exec_entries(dir: Option<&std::path::Path>, prefix: &str) -> Vec<Entry> {
     use std::os::unix::fs::PermissionsExt;
-    let dir = crate::config::config_dir().map(|d| d.join("scripts"));
     let mut v: Vec<Entry> = dir
-        .as_ref()
         .and_then(|d| std::fs::read_dir(d).ok())
         .into_iter()
         .flatten()
         .flatten()
         .filter(|f| std::fs::metadata(f.path()).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
-        .map(|f| Entry { label: f.file_name().to_string_lossy().into_owned(), act: Act::Run { cmd: f.path().to_string_lossy().into_owned(), terminal: false } })
+        .map(|f| Entry { label: format!("{prefix}{}", f.file_name().to_string_lossy()), act: Act::Run { cmd: f.path().to_string_lossy().into_owned(), terminal: false } })
         .collect();
     v.sort_by(|a, b| a.label.cmp(&b.label));
+    v
+}
+
+/// Executables in `<config dir>/scripts/`: drop a file there and it is in the menu.
+fn script_entries() -> Vec<Entry> {
+    let mut v = dir_entries("scripts", "");
     if v.is_empty() {
         v.push(e("no scripts: put executables in <config dir>/scripts/", Act::Nop));
+    }
+    v
+}
+
+/// The launcher's power section: the `ctl session` verbs.
+const POWER: [&str; 6] = ["lock", "logout", "suspend", "hibernate", "reboot", "poweroff"];
+
+/// The launcher's backup section: executables in `<config dir>/backup/` (a script per backup job).
+fn backup_entries() -> Vec<Entry> {
+    let mut v = dir_entries("backup", "backup: ");
+    if v.is_empty() {
+        v.push(e("backup: put executables in <config dir>/backup/", Act::Nop));
     }
     v
 }
@@ -231,6 +251,10 @@ impl Desktop {
             Id::Games => grouped(&[("Natywne", is_game_native), ("Flatpak", is_game_flatpak)]),
             Id::Run => {
                 let mut v = grouped(&[("Aplikacje", any_app)]);
+                v.push(head("Zasilanie"));
+                v.extend(POWER.iter().map(|s| e(&format!("power: {s}"), Act::Ctl(format!("session {s}")))));
+                v.push(head("Backup"));
+                v.extend(backup_entries());
                 v.push(head("Polecenia"));
                 v.extend(super::launcher::commands().into_iter().map(|c| Entry { label: c.clone(), act: Act::Run { cmd: c, terminal: false } }));
                 v
@@ -249,7 +273,7 @@ impl Desktop {
                 e("Kosz", Act::Open(Id::Trash)),
                 e("System", Act::Open(Id::System)),
             ],
-            Id::Session => ["lock", "logout", "suspend", "hibernate", "reboot", "poweroff"].iter().map(|s| e(s, Act::Ctl(format!("session {s}")))).collect(),
+            Id::Session => POWER.iter().map(|s| e(s, Act::Ctl(format!("session {s}")))).collect(),
             Id::Notes => {
                 let v: Vec<Entry> = self.notes.list.iter().rev().map(|n| e(&format!("{}  {}", n.stamp, n.text), Act::Nop)).collect();
                 if v.is_empty() { vec![e("no notifications (ctl notify TEXT)", Act::Nop)] } else { v }
@@ -599,5 +623,20 @@ mod tests {
     fn opening_a_deep_level_opens_the_path_to_it() {
         let path = crate::flows::hfsm::path_of(Id::Themes, Id::parent);
         assert_eq!(path, [Id::Root, Id::Settings, Id::Themes]);
+    }
+
+    #[test]
+    fn executables_in_a_folder_become_entries_and_plain_files_do_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("fd-menu-exec-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        for (n, mode) in [("home", 0o755), ("etc", 0o755), ("notes.txt", 0o644)] {
+            std::fs::write(d.join(n), "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(d.join(n), std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let labels: Vec<String> = exec_entries(Some(&d), "backup: ").into_iter().map(|e| e.label).collect();
+        assert_eq!(labels, ["backup: etc", "backup: home"]);
+        assert!(exec_entries(None, "x").is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

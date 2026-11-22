@@ -17,7 +17,7 @@ Layouts parked for later live in `src/unused/screen_mode/`.
 
 | key | action |
 |---|---|
-| Mod+Return / Mod+W | terminal (`$TERMINAL`, default foot) / launcher (apps + PATH, type to filter, unmatched text runs as typed) |
+| Mod+Return / Mod+W | terminal (`$TERMINAL`, default foot) / launcher (sections Aplikacje, Zasilanie, Backup, Polecenia; type to filter, unmatched text runs as typed) |
 | Mod+Shift+W | the menu (apps, games, clipboard, calculator, settings) |
 | Mod+Q, Mod+Shift+C | close focused |
 | Mod+Shift+Q | quit |
@@ -56,7 +56,7 @@ A theme is a separate setting from a mode: a theme is how it looks, a mode is ho
 
 `Mod+Shift+W` opens the menu: Aplikacje (ONE list with sections Flatpak / Natywne / Gry), Schowek, Skrypty
 (executables in `<config dir>/scripts/`), Kalkulator, Ustawienia. Type filters, Left goes back (clears the query first), Right/Enter goes in.
-`ctl menu launch` (Mod+W) is the launcher. `ctl log [N]` prints the last N log lines (also kept in
+`ctl menu launch` (Mod+W) is the launcher: besides apps it has `power: lock|logout|suspend|hibernate|reboot|poweroff` (`ctl session`) and `backup: NAME` for every executable in `<config dir>/backup/` (one script per backup job). `ctl log [N]` prints the last N log lines (also kept in
 `~/.local/state/finedesktop/log`); every action, from a key, `ctl` or a hook, is logged as `action: ...`.
 
 ## Tab and stack labels
