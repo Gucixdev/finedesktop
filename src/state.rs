@@ -50,6 +50,10 @@ pub struct Desktop {
     pub loop_signal: LoopSignal,
     pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Desktop>,
     pub drm: Option<crate::components::compositor_drm::Drm>,
+    pub dmabuf_state: smithay::wayland::dmabuf::DmabufState,
+    /// imports waiting for a renderer that is not in the state (the nested winit backend answers them on its next frame)
+    pub dmabuf_pending: Vec<(smithay::backend::allocator::dmabuf::Dmabuf, smithay::wayland::dmabuf::ImportNotifier)>,
+    pub dmabuf_global: Option<smithay::wayland::dmabuf::DmabufGlobal>,
 
     // Smithay State
     pub compositor_state: CompositorState,
@@ -155,6 +159,9 @@ impl Desktop {
             loop_signal,
             loop_handle: event_loop.handle(),
             drm: None,
+            dmabuf_state: smithay::wayland::dmabuf::DmabufState::new(),
+            dmabuf_global: None,
+            dmabuf_pending: Vec::new(),
             socket_name,
 
             compositor_state,

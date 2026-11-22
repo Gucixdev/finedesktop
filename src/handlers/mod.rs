@@ -1,4 +1,6 @@
 mod compositor;
+mod dmabuf;
+pub use dmabuf::hook_surface;
 mod layer_shell;
 mod xdg_shell;
 
