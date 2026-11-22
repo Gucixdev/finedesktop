@@ -70,10 +70,23 @@ pub fn ctl(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     if writeln!(stream, "{}", args.join(" ")).is_err() {
         return 2;
     }
+    if args.first().map(String::as_str) == Some("subscribe") {
+        // stream: print every event line as it arrives until the compositor goes away
+        let mut out = std::io::stdout();
+        for line in BufReader::new(stream).lines().map_while(Result::ok) {
+            if line == "ok" {
+                continue;
+            }
+            if writeln!(out, "{line}").and_then(|_| out.flush()).is_err() {
+                break;
+            }
+        }
+        return 0;
+    }
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut out = String::new();
     let _ = std::io::Read::read_to_string(&mut stream, &mut out);
     print!("{out}");

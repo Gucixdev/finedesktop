@@ -33,6 +33,21 @@ wait_clients() { # want_count
 }
 geo() { ctl state | grep "^  ws$1 #$2" | grep -o '[0-9]*x[0-9]*@[0-9-]*,[0-9-]*\|hidden'; }
 
+# --- themes, modes, events ---
+[ "$(ctl theme list | grep -c 'dwl\*')" = 1 ] && ok "theme list marks the active one" || bad "theme list"
+[ "$(ctl theme matrix)" = ok ] && ctl theme list | grep -q 'matrix\*' && ok "theme switch" || bad "theme switch"
+[ "$(ctl theme nope | cut -c1-6)" = error: ] && ok "unknown theme rejected" || bad "unknown theme accepted"
+[ "$(ctl mode gamemode)" = ok ] && ok "mode on" || bad "mode on"
+ctl theme list | grep -q 'matrix\*' && ok "mode leaves the theme alone" || bad "mode changed the theme"
+[ "$(ctl mode off)" = ok ] && ok "mode off" || bad "mode off"
+[ "$(ctl mode nightmode)" = ok ] && ctl theme list | grep -q 'zen\*' && ok "nightmode switches theme" || bad "nightmode"
+ctl mode off >/dev/null; ctl theme list | grep -q 'matrix\*' && ok "mode off restores theme" || bad "theme not restored"
+ctl theme dwl >/dev/null
+( ctl subscribe > "$log/sub.out" 2>&1 & echo $! > "$log/sub.pid" ); sleep 0.3
+ctl emit ping hello >/dev/null; ctl bar toggle >/dev/null; ctl bar toggle >/dev/null; sleep 0.3
+kill "$(cat "$log/sub.pid")" 2>/dev/null
+grep -q '^user ping hello' "$log/sub.out" && ok "subscribe streams user events" || bad "subscribe: $(cat "$log/sub.out")"
+
 [ "$(ctl state | head -1 | grep -c monitor)" = 1 ] && ok "state reports a monitor" || bad "no monitor"
 out=$(ctl state | head -1); W=$(echo "$out" | sed -E 's/.* ([0-9]+)x[0-9]+@.*/\1/')
 
