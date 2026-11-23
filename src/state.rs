@@ -540,7 +540,7 @@ impl Desktop {
             .collect()
     }
 
-    /// One window at a time (monocle, tabbed, deck): left/up is previous, right/down is next.
+    /// One window at a time (monocle, tabbed, list): left/up is previous, right/down is next.
     fn one_at_a_time(rects: &[Option<crate::components::engine::layout_engine::Rect>]) -> bool {
         rects.len() > 1 && rects.iter().filter(|r| r.is_some()).count() <= 1
     }

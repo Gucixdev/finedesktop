@@ -10,7 +10,10 @@ Smithay is vendored in `vendor/smithay` on purpose: the whole stack stays readab
 ## Layouts
 
 Pure geometry in `src/components/engine/layout_engine.rs` (unit-tested, no smithay types):
-`tile` `float` `monocle` `deck` `grid` `stack` `tab` `spiral` (Fibonacci; `mfact 0.62` is the golden one). New layout = one enum variant + one `match` arm.
+`tile` `float` `monocle` `list` `grid` `stack` `tab` `spiral` (Fibonacci; `mfact 0.62` is the golden one). New layout = one enum variant + one `match` arm.
+`list` was `deck` (the old name still works in configs and ctl): the master on the left, one window of the rest on the right.
+
+On a Steam Deck (DMI product Jupiter or Galileo, or `FD_PROFILE=steamdeck`) `src/steamdeck.conf` is applied after the defaults: doubled font, tall tab bars, `list` layout, 4 workspaces, phone-like trackpads, brightness keys, battery in the bar. Your own config still wins. Not run on a real Deck yet.
 Layouts parked for later live in `src/unused/screen_mode/`.
 
 ## Keys (Mod = Super, or Alt with `FD_MOD=alt`)
@@ -24,7 +27,7 @@ Layouts parked for later live in `src/unused/screen_mode/`.
 | Mod+J / Mod+K | focus next / previous |
 | Mod+Shift+Return | move focused to master |
 | Mod+Space / Mod+Shift+Space | next / previous layout |
-| Mod+T F M D G S Y R | tile float monocle deck grid stack tab spiral |
+| Mod+T F M D G S Y R | tile float monocle list grid stack tab spiral |
 | Mod+H / Mod+L | master width - / + |
 | Mod+I / Mod+Shift+I | more / fewer masters |
 
@@ -83,7 +86,7 @@ A theme is a separate setting from a mode: a theme is how it looks, a mode is ho
 
 ## Tab and stack labels
 
-In `tab`, `stack`, `deck` and `monocle` each window is a label in the bar. `ctl name TEXT` renames the focused one,
+In `tab`, `stack`, `list` and `monocle` each window is a label in the bar. `ctl name TEXT` renames the focused one,
 `ctl name ID TEXT` a given window (ids are in `ctl state` and in hooks as `FD_WINDOW`), `ctl name -` gives the title
 back. A hook can name windows by app: `on-window-open` running `ctl name "$FD_WINDOW" "$FD_APPID"`.
 The bar is one text row plus 2 px; `tab_height = N` in the config sets it.

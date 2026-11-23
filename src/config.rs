@@ -6,6 +6,15 @@ use smithay::input::keyboard::xkb;
 use crate::components::engine::layout_engine::Layout;
 
 pub const DEFAULT: &str = include_str!("default.conf");
+pub const STEAMDECK: &str = include_str!("steamdeck.conf");
+
+/// Steam Deck (DMI product Jupiter = LCD, Galileo = OLED) or `FD_PROFILE=steamdeck`.
+pub fn is_steam_deck() -> bool {
+    if let Ok(p) = std::env::var("FD_PROFILE") {
+        return p == "steamdeck";
+    }
+    std::fs::read_to_string("/sys/class/dmi/id/product_name").is_ok_and(|n| matches!(n.trim(), "Jupiter" | "Galileo"))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Mods {
@@ -530,6 +539,11 @@ impl Config {
         for e in c.apply(DEFAULT) {
             tracing::error!("built-in config: {e}");
         }
+        if is_steam_deck() {
+            for e in c.apply(STEAMDECK) {
+                tracing::error!("steamdeck preset: {e}");
+            }
+        }
         if let Some(path) = user_path() {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 for e in c.apply(&text) {
@@ -627,6 +641,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn steamdeck_preset_parses_and_sets_the_list_layout() {
+        let mut c = Config::default();
+        assert!(c.apply(DEFAULT).is_empty());
+        let errs = c.apply(STEAMDECK);
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(c.layout, Layout::List);
+        assert_eq!(c.font_scale, 2);
+        assert_eq!(c.workspaces, 4);
+    }
 
     #[test]
     fn mouse_follows_focus_is_on_and_tearing_off_by_default_and_both_parse() {

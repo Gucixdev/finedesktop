@@ -1,5 +1,5 @@
 //! Everything the compositor draws itself, on top of the client windows: the status bar, the tab/stack bar of
-//! the monocle/tabbed/deck layouts, and window borders. Backends call `overlay()` and render the result.
+//! the monocle/tabbed/list layouts, and window borders. Backends call `overlay()` and render the result.
 //! Text goes through `font::Canvas` into an ARGB buffer that is cached per output and only redrawn when its
 //! content changes.
 
@@ -270,7 +270,7 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
         }
     }
 
-    // tab / stack bar of monocle, tabbed, deck ... drawn over the top of the window area
+    // tab / stack bar of monocle, tabbed, list ... drawn over the top of the window area
     if let Some(bar) = state.mons[mi].bar {
         let ws = &state.mons[mi].ws[state.mons[mi].cur];
         let titles: Vec<String> = ws

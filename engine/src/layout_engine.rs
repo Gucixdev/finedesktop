@@ -4,7 +4,7 @@
 //!   tile     master column left (`nmaster`, `mfact`), the rest stacked right (dwm tile)
 //!   float    windows keep their own position and size
 //!   monocle  every window fills the area, only the focused one is shown
-//!   deck     master column left, right column shows only one window of the stack
+//!   list     master column left, right column shows only one window of the stack
 //!   grid     rows x cols, equal cells
 //!   stack    one window shown, one title row per window above it (like i3 stacking)
 //!   tab      one window shown, one tab bar above it (like i3 tabbed)
@@ -26,7 +26,7 @@ pub enum Layout {
     Tile,
     Float,
     Monocle,
-    Deck,
+    List,
     Grid,
     Stack,
     Tab,
@@ -38,7 +38,7 @@ impl Layout {
         Layout::Tile,
         Layout::Float,
         Layout::Monocle,
-        Layout::Deck,
+        Layout::List,
         Layout::Grid,
         Layout::Stack,
         Layout::Tab,
@@ -50,7 +50,7 @@ impl Layout {
             Layout::Tile => "tile",
             Layout::Float => "float",
             Layout::Monocle => "monocle",
-            Layout::Deck => "deck",
+            Layout::List => "list",
             Layout::Grid => "grid",
             Layout::Stack => "stack",
             Layout::Tab => "tab",
@@ -61,6 +61,7 @@ impl Layout {
     pub fn from_name(s: &str) -> Option<Layout> {
         // his words: "tiled" means equal cells (grid), "fibonacci" the spiral; the dwm column layout stays `tile`
         let s = match s {
+            "deck" => "list", // the old name, kept so configs and scripts keep working
             "tiled" => "grid",
             "fibonacci" => "spiral",
             other => other,
@@ -133,7 +134,7 @@ pub fn arrange(layout: Layout, area: Rect, n: usize, focused: usize, p: &Params)
         Layout::Grid => shown(grid(area, n, p.gap)),
         Layout::Spiral => shown(spiral(area, n, p)),
         Layout::Monocle => one_visible(area, n, focused, p.gap, None),
-        Layout::Deck => deck(area, n, focused, p),
+        Layout::List => list(area, n, focused, p),
         Layout::Tab => bar_layout(area, n, focused, p, BarKind::Tabs),
         Layout::Stack => bar_layout(area, n, focused, p, BarKind::Rows),
     }
@@ -237,7 +238,7 @@ fn one_visible(area: Rect, n: usize, focused: usize, gap: i32, bar: Option<Bar>)
     }
 }
 
-fn deck(area: Rect, n: usize, focused: usize, p: &Params) -> Plan {
+fn list(area: Rect, n: usize, focused: usize, p: &Params) -> Plan {
     let nmaster = p.nmaster.min(n);
     if nmaster == 0 {
         return one_visible(area, n, focused, p.gap, None);
@@ -296,6 +297,8 @@ mod tests {
     #[test]
     fn aliases_use_his_words() {
         assert_eq!(Layout::from_name("tiled"), Some(Layout::Grid));
+        assert_eq!(Layout::from_name("deck"), Some(Layout::List));
+        assert_eq!(Layout::from_name("list"), Some(Layout::List));
         assert_eq!(Layout::from_name("fibonacci"), Some(Layout::Spiral));
         assert_eq!(Layout::from_name("tile"), Some(Layout::Tile));
     }
@@ -358,10 +361,10 @@ mod tests {
     }
 
     #[test]
-    fn deck_shows_one_stack_window() {
-        let plan = arrange(Layout::Deck, A, 4, 3, &p());
+    fn list_shows_one_stack_window() {
+        let plan = arrange(Layout::List, A, 4, 3, &p());
         assert_eq!(visible(&plan), vec![true, false, false, true]);
-        let plan = arrange(Layout::Deck, A, 4, 0, &p());
+        let plan = arrange(Layout::List, A, 4, 0, &p());
         assert_eq!(visible(&plan), vec![true, true, false, false]);
     }
 
