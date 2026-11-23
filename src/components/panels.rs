@@ -74,7 +74,7 @@ pub(crate) fn mark(on: bool, name: &str) -> String {
 pub(crate) fn dropdown(label: &str, key: &'static str, options: &[(&str, &str)], cur: &str) -> Entry {
     let sel = options.iter().position(|(_, v)| *v == cur).unwrap_or(0);
     let shown = options.get(sel).filter(|(_, v)| *v == cur).map_or_else(|| if cur.is_empty() { "-".to_string() } else { cur.to_string() }, |(l, _)| (*l).to_string());
-    Entry { label: label.into(), act: Act::Choice { cur: shown, sel, options: options.iter().map(|(l, v)| choice(l, key, v, cur)).collect() } }
+    Entry { icon: None, label: label.into(), act: Act::Choice { cur: shown, sel, options: options.iter().map(|(l, v)| choice(l, key, v, cur)).collect() } }
 }
 
 /// A choice: one value of one config key, starred when it is the current one.
@@ -304,7 +304,7 @@ impl Desktop {
             let cur_label = cur.map(|c| outputs::mode_label((c.size.w, c.size.h, c.refresh))).unwrap_or_default();
             let sel = labels.iter().position(|l| *l == cur_label).unwrap_or(0);
             let options = labels.iter().take(60).map(|l| e(&mark(*l == cur_label, l), Act::Out(format!("{name} mode={l}")))).collect();
-            v.push(Entry { label: format!("{name}: rozdzielczosc i odswiezanie"), act: Act::Choice { cur: cur_label, sel, options } });
+            v.push(Entry { icon: None, label: format!("{name}: rozdzielczosc i odswiezanie"), act: Act::Choice { cur: cur_label, sel, options } });
             let mut places = Vec::new();
             for (oi, (oname, oat, osize)) in geos.iter().enumerate() {
                 if oi == mi {
@@ -316,7 +316,7 @@ impl Desktop {
                 }
             }
             if !places.is_empty() {
-                v.push(Entry { label: format!("{name}: polozenie"), act: Act::Choice { cur: format!("{},{}", at.0, at.1), sel: 0, options: places } });
+                v.push(Entry { icon: None, label: format!("{name}: polozenie"), act: Act::Choice { cur: format!("{},{}", at.0, at.1), sel: 0, options: places } });
             }
             if geos.len() > 1 {
                 v.push(e(&format!("Wylacz {name}"), Act::Out(format!("{name} off"))));

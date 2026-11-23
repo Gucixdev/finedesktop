@@ -34,4 +34,6 @@ pub mod autostart;
 pub mod ast;
 pub mod api;
 pub mod keyval;
+pub mod icons;
+pub mod png;
 pub mod restore;

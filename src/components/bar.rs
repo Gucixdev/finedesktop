@@ -495,7 +495,7 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                                 cv.text(box_x + pad, y, value, fg, ms, box_x + bw - lh);
                                 cv.text(box_x + bw - lh + pad, y, "v", if n == sel { th.sel_fg } else { th.accent }, ms, box_x + bw);
                             }
-                            super::menu::Row::Item(s) => {
+                            super::menu::Row::Item(s) | super::menu::Row::Icon(s, _) => {
                                 if n == sel {
                                     cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
                                 }
@@ -506,7 +506,16 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                                 } else {
                                     th.fg
                                 };
-                                cv.text(x0 + if tabs.is_some() { 0 } else { pad }, y, s, fg, ms, w - pad);
+                                let mut tx = x0 + if tabs.is_some() { 0 } else { pad };
+                                if let super::menu::Row::Icon(_, name) = r {
+                                    // the picture sits in the row's height; an icon without a PNG leaves its space empty so labels line up
+                                    let side = (lh - 2).max(8) as usize;
+                                    if let Some(img) = super::icons::load(name, side) {
+                                        cv.blit(tx, y + 1, &img);
+                                    }
+                                    tx += side as i32 + pad;
+                                }
+                                cv.text(tx, y, s, fg, ms, w - pad);
                             }
                         }
                     }

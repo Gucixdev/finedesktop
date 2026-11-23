@@ -164,7 +164,7 @@ mod tests {
     }
 
     fn app(id: &str, exec: &str) -> App {
-        App { id: id.into(), name: id.into(), exec: exec.into(), terminal: false, flatpak: false, game: false }
+        App { id: id.into(), name: id.into(), exec: exec.into(), terminal: false, flatpak: false, game: false, icon: String::new() }
     }
 
     #[test]
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn terminal_apps_get_the_preferred_terminal() {
-        let a = App { id: "htop.desktop".into(), name: "htop".into(), exec: "htop".into(), terminal: true, flatpak: false, game: false };
+        let a = App { id: "htop.desktop".into(), name: "htop".into(), exec: "htop".into(), terminal: true, flatpak: false, game: false, icon: String::new() };
         assert_eq!(command_for(&a, "foot"), "foot -e htop");
         assert_eq!(command_for(&App { terminal: false, ..a }, "foot"), "htop");
     }

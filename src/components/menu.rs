@@ -220,6 +220,8 @@ pub enum Act {
 
 #[derive(Debug, Clone)]
 pub struct Entry {
+    /// icon name (an application's `Icon=`), drawn before the label when a PNG is found
+    pub icon: Option<String>,
     pub label: String,
     pub act: Act,
 }
@@ -245,6 +247,8 @@ pub struct Tabs {
 pub enum Row {
     Head(String),
     Item(String),
+    /// label and the icon name drawn before it
+    Icon(String, String),
     Check(String, bool),
     /// label, 0..=1 position, the value as text
     Slider(String, f32, String),
@@ -276,7 +280,10 @@ impl Entry {
             }
             Act::Color { rgb, .. } | Act::Swatch(rgb) | Act::SetColor(rgb) => Row::Color(self.label.clone(), *rgb),
             Act::Choice { cur, .. } => Row::Choice(self.label.clone(), cur.clone()),
-            _ => Row::Item(self.label.clone()),
+            _ => match &self.icon {
+                Some(i) => Row::Icon(self.label.clone(), i.clone()),
+                None => Row::Item(self.label.clone()),
+            },
         }
     }
 
@@ -287,11 +294,11 @@ impl Entry {
 }
 
 pub(super) fn e(label: &str, act: Act) -> Entry {
-    Entry { label: label.into(), act }
+    Entry { icon: None, label: label.into(), act }
 }
 
 pub(super) fn head(label: &str) -> Entry {
-    Entry { label: label.into(), act: Act::Head }
+    Entry { icon: None, label: label.into(), act: Act::Head }
 }
 
 /// The entries of a settings group: one Open per subcategory.
@@ -310,7 +317,7 @@ fn grouped(kinds: &[(&str, fn(&apps::App) -> bool)]) -> Vec<Entry> {
     let all = apps::scan();
     let mut out = Vec::new();
     for (title, f) in kinds {
-        let mut part: Vec<Entry> = all.iter().filter(|a| f(a)).map(|a| Entry { label: a.name.clone(), act: Act::Run { cmd: a.exec.clone(), terminal: a.terminal } }).collect();
+        let mut part: Vec<Entry> = all.iter().filter(|a| f(a)).map(|a| Entry { icon: Some(a.icon.clone()).filter(|i| !i.is_empty()), label: a.name.clone(), act: Act::Run { cmd: a.exec.clone(), terminal: a.terminal } }).collect();
         if !part.is_empty() {
             out.push(head(title));
             out.append(&mut part);
@@ -354,7 +361,7 @@ fn exec_entries(dir: Option<&std::path::Path>, prefix: &str) -> Vec<Entry> {
         .flatten()
         .flatten()
         .filter(|f| std::fs::metadata(f.path()).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
-        .map(|f| Entry { label: format!("{prefix}{}", f.file_name().to_string_lossy()), act: Act::Run { cmd: f.path().to_string_lossy().into_owned(), terminal: false } })
+        .map(|f| Entry { icon: None, label: format!("{prefix}{}", f.file_name().to_string_lossy()), act: Act::Run { cmd: f.path().to_string_lossy().into_owned(), terminal: false } })
         .collect();
     v.sort_by(|a, b| a.label.cmp(&b.label));
     v
@@ -390,7 +397,7 @@ fn appimages_in(dirs: &[std::path::PathBuf]) -> Vec<Entry> {
         }
     }
     v.sort_by_key(|(n, _)| n.to_lowercase());
-    v.into_iter().map(|(n, p)| Entry { label: n, act: Act::Run { cmd: format!("'{}'", p.replace('\'', "'\\''")), terminal: false } }).collect()
+    v.into_iter().map(|(n, p)| Entry { icon: None, label: n, act: Act::Run { cmd: format!("'{}'", p.replace('\'', "'\\''")), terminal: false } }).collect()
 }
 
 /// Executables in `<config dir>/scripts/`: drop a file there and it is in the menu.
@@ -420,7 +427,7 @@ fn clip_entries() -> Vec<Entry> {
             .lines()
             .take(300)
             .filter_map(|l| l.split_once('\t'))
-            .map(|(id, text)| Entry { label: text.trim().chars().take(200).collect(), act: Act::Clip(id.into()) })
+            .map(|(id, text)| Entry { icon: None, label: text.trim().chars().take(200).collect(), act: Act::Clip(id.into()) })
             .collect(),
         _ => vec![e("cliphist is not installed or empty", Act::Nop)],
     }
@@ -466,7 +473,7 @@ impl Desktop {
                     v.push(e(&format!("otworz: {}", id.title()), Act::Open(id)));
                 }
                 v.push(head("Polecenia"));
-                v.extend(super::launcher::commands().into_iter().map(|c| Entry { label: c.clone(), act: Act::Run { cmd: c, terminal: false } }));
+                v.extend(super::launcher::commands().into_iter().map(|c| Entry { icon: None, label: c.clone(), act: Act::Run { cmd: c, terminal: false } }));
                 v
             }
             Id::Scripts => script_entries(),
@@ -516,13 +523,13 @@ impl Desktop {
             Id::Prefer => {
                 use crate::components::settings::settings_preferaps::{formats, PROGRAMS, ROLES};
                 let cur = |r: &str| self.config.prefer_get(r).filter(|c| !c.is_empty()).unwrap_or_else(|| "(domyslna systemu)".into());
-                let mut v: Vec<Entry> = ROLES[..PROGRAMS].iter().map(|r| Entry { label: format!("{r}: {}", cur(r)), act: Act::PickPrefer(r.to_string()) }).collect();
+                let mut v: Vec<Entry> = ROLES[..PROGRAMS].iter().map(|r| Entry { icon: None, label: format!("{r}: {}", cur(r)), act: Act::PickPrefer(r.to_string()) }).collect();
                 v.push(head("co otwiera dany format plikow"));
-                v.extend(ROLES[PROGRAMS..].iter().map(|r| Entry { label: format!("{r} ({}): {}", formats(r), cur(r)), act: Act::PickPrefer(r.to_string()) }));
+                v.extend(ROLES[PROGRAMS..].iter().map(|r| Entry { icon: None, label: format!("{r} ({}): {}", formats(r), cur(r)), act: Act::PickPrefer(r.to_string()) }));
                 v
             }
             Id::Themes => {
-                let mut v: Vec<Entry> = crate::components::theme::Theme::list().into_iter().map(|n| Entry { label: n.clone(), act: Act::Theme(n) }).collect();
+                let mut v: Vec<Entry> = crate::components::theme::Theme::list().into_iter().map(|n| Entry { icon: None, label: n.clone(), act: Act::Theme(n) }).collect();
                 v.push(head("jasny / ciemny"));
                 v.push(e("Przelacz jasny / ciemny", Act::Ctl("theme toggle".into())));
                 v.push(head("wlasne"));
@@ -532,11 +539,11 @@ impl Desktop {
             }
             Id::Modes => std::iter::once("off".to_string())
                 .chain(Desktop::mode_names())
-                .map(|n| Entry { label: n.clone(), act: Act::Mode(n) })
+                .map(|n| Entry { icon: None, label: n.clone(), act: Act::Mode(n) })
                 .collect(),
             Id::Layouts => crate::components::engine::layout_engine::Layout::ALL
                 .iter()
-                .map(|l| Entry { label: l.name().into(), act: Act::Layout(l.name().into()) })
+                .map(|l| Entry { icon: None, label: l.name().into(), act: Act::Layout(l.name().into()) })
                 .collect(),
         };
         Level { id, items }
@@ -952,7 +959,7 @@ impl Desktop {
                 return std::iter::once(menu.crumbs())
                     .chain(rows.iter().enumerate().map(|(n, r)| match r {
                         Row::Head(h) => format!("-- {h}"),
-                        Row::Item(l) => format!("{}{l}", if n == sel { "> " } else { "  " }),
+                        Row::Item(l) | Row::Icon(l, _) => format!("{}{l}", if n == sel { "> " } else { "  " }),
                         Row::Check(l, on) => format!("{}[{}] {l}", if n == sel { "> " } else { "  " }, if *on { "x" } else { " " }),
                         Row::Slider(l, _, v) => format!("{}{l}: {v}", if n == sel { "> " } else { "  " }),
                         Row::Color(l, c) => format!("{}{l} {}", if n == sel { "> " } else { "  " }, crate::components::theme::hex(*c)),
@@ -1044,7 +1051,7 @@ impl Desktop {
         level.items = vec![match crate::components::calc::eval(&menu.query) {
             Some(v) => {
                 let r = crate::components::calc::show(v);
-                Entry { label: format!("= {r}"), act: Act::Copy(r) }
+                Entry { icon: None, label: format!("= {r}"), act: Act::Copy(r) }
             }
             None if menu.query.trim().is_empty() => e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop),
             None => e("blad skladni", Act::Nop),
@@ -1192,7 +1199,7 @@ impl Desktop {
                     .lines()
                     .map(str::trim)
                     .filter(|l| l.starts_with('/') && !l.contains("nologin") && !l.ends_with("/false"))
-                    .map(|p| Entry { label: p.rsplit('/').next().unwrap_or(p).to_string(), act: Act::SetPrefer { role: role.clone(), cmd: p.to_string() } })
+                    .map(|p| Entry { icon: None, label: p.rsplit('/').next().unwrap_or(p).to_string(), act: Act::SetPrefer { role: role.clone(), cmd: p.to_string() } })
                     .collect();
                 items.dedup_by(|a, b| a.label == b.label);
                 if items.is_empty() {
@@ -1206,7 +1213,7 @@ impl Desktop {
             }
             let items = apps::scan()
                 .into_iter()
-                .map(|a| Entry { label: a.name.clone(), act: Act::SetPrefer { role: role.clone(), cmd: crate::components::settings::settings_preferaps::command_for(&a, &term) } })
+                .map(|a| Entry { icon: None, label: a.name.clone(), act: Act::SetPrefer { role: role.clone(), cmd: crate::components::settings::settings_preferaps::command_for(&a, &term) } })
                 .collect();
             let menu = self.menu.as_mut().unwrap();
             menu.stack.push(Level { id: Id::AllApps, items });
@@ -1297,7 +1304,7 @@ fn file_entries(list: &str, home: &str) -> Vec<Entry> {
         .filter_map(|p| p.strip_prefix(&prefix).map(|rel| (p, rel)))
         .filter(|(_, rel)| !rel.split('/').any(|c| c.starts_with('.') || matches!(c, "target" | "node_modules" | "graphify-out" | "__pycache__")))
         .take(15)
-        .map(|(p, rel)| Entry { label: format!("~/{rel}"), act: Act::Run { cmd: format!("xdg-open '{}'", p.replace('\'', "'\\''")), terminal: false } })
+        .map(|(p, rel)| Entry { icon: None, label: format!("~/{rel}"), act: Act::Run { cmd: format!("xdg-open '{}'", p.replace('\'', "'\\''")), terminal: false } })
         .collect()
 }
 
@@ -1322,9 +1329,9 @@ mod tests {
 
     #[test]
     fn checkboxes_and_sliders_draw_as_such() {
-        let c = Entry { label: "a".into(), act: Act::Toggle { key: "restore", on: true } };
+        let c = Entry { icon: None, label: "a".into(), act: Act::Toggle { key: "restore", on: true } };
         assert_eq!(c.row(), Row::Check("a".into(), true));
-        let sl = Entry { label: "g".into(), act: Act::Slide { key: "gap", min: 0.0, max: 40.0, step: 1.0, val: 10.0 } };
+        let sl = Entry { icon: None, label: "g".into(), act: Act::Slide { key: "gap", min: 0.0, max: 40.0, step: 1.0, val: 10.0 } };
         assert_eq!(sl.row(), Row::Slider("g".into(), 0.25, "10".into()));
         assert_eq!(e("x", Act::Nop).row(), Row::Item("x".into()));
     }
@@ -1344,7 +1351,7 @@ mod tests {
 
     #[test]
     fn a_choice_row_shows_the_current_value() {
-        let c = Entry { label: "Uklad".into(), act: Act::Choice { cur: "grid".into(), sel: 0, options: vec![e("grid", Act::Nop)] } };
+        let c = Entry { icon: None, label: "Uklad".into(), act: Act::Choice { cur: "grid".into(), sel: 0, options: vec![e("grid", Act::Nop)] } };
         assert_eq!(c.row(), Row::Choice("Uklad".into(), "grid".into()));
     }
 

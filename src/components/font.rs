@@ -179,6 +179,27 @@ impl Canvas {
         Canvas { w, h, px }
     }
 
+    /// Draw `img` with its top-left at (x, y), blended over what is there by its alpha.
+    pub fn blit(&mut self, x: i32, y: i32, img: &super::png::Image) {
+        for iy in 0..img.h as i32 {
+            for ix in 0..img.w as i32 {
+                let (cx, cy) = (x + ix, y + iy);
+                if cx < 0 || cy < 0 || cx >= self.w || cy >= self.h {
+                    continue;
+                }
+                let p = &img.rgba[(iy as usize * img.w + ix as usize) * 4..][..4];
+                let a = p[3] as u32;
+                if a == 0 {
+                    continue;
+                }
+                let o = ((cy * self.w + cx) * 4) as usize;
+                for (k, ch) in [p[2], p[1], p[0]].into_iter().enumerate() {
+                    self.px[o + k] = ((ch as u32 * a + self.px[o + k] as u32 * (255 - a)) / 255) as u8;
+                }
+            }
+        }
+    }
+
     pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgb) {
         for yy in y.max(0)..(y + h).min(self.h) {
             for xx in x.max(0)..(x + w).min(self.w) {

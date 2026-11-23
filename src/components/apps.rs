@@ -12,6 +12,8 @@ pub struct App {
     pub terminal: bool,
     pub flatpak: bool,
     pub game: bool,
+    /// the `Icon=` value: a name or an absolute path, empty when the file has none
+    pub icon: String,
 }
 
 fn dirs() -> Vec<PathBuf> {
@@ -47,7 +49,7 @@ fn strip_codes(exec: &str) -> String {
 }
 
 fn parse(text: &str, flatpak: bool, id: &str) -> Option<App> {
-    let (mut name, mut exec, mut terminal, mut hidden, mut cats, mut app) = (None, None, false, false, String::new(), true);
+    let (mut name, mut exec, mut terminal, mut hidden, mut cats, mut app, mut icon) = (None, None, false, false, String::new(), true, String::new());
     let mut inside = false;
     for line in text.lines() {
         let line = line.trim();
@@ -64,6 +66,7 @@ fn parse(text: &str, flatpak: bool, id: &str) -> Option<App> {
             "Exec" => exec = exec.or_else(|| Some(strip_codes(v))),
             "Terminal" => terminal = v == "true",
             "NoDisplay" | "Hidden" => hidden |= v == "true",
+            "Icon" if icon.is_empty() => icon = v.trim().to_string(),
             "Categories" => cats = v.to_string(),
             "Type" => app = v == "Application",
             _ => {}
@@ -72,7 +75,7 @@ fn parse(text: &str, flatpak: bool, id: &str) -> Option<App> {
     if hidden || !app {
         return None;
     }
-    Some(App { id: id.to_string(), name: name?, exec: exec.filter(|e| !e.is_empty())?, terminal, flatpak, game: cats.split(';').any(|c| c == "Game") })
+    Some(App { id: id.to_string(), name: name?, exec: exec.filter(|e| !e.is_empty())?, terminal, flatpak, game: cats.split(';').any(|c| c == "Game"), icon })
 }
 
 /// Every application once (the first directory wins), sorted by name.
