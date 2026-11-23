@@ -24,6 +24,8 @@ pub enum Id {
     Wallpaper,
     Devices,
     Drivers,
+    Update,
+    Cleaner,
     Trash,
     System,
     Themes,
@@ -70,6 +72,8 @@ impl Id {
             "wallpaper" | "tapeta" => Id::Wallpaper,
             "devices" | "urzadzenia" => Id::Devices,
             "drivers" | "sterowniki" => Id::Drivers,
+            "update" | "updates" | "aktualizacje" => Id::Update,
+            "cleaner" | "clean" | "czyszczenie" => Id::Cleaner,
             "trash" => Id::Trash,
             "system" => Id::System,
             "prefer" => Id::Prefer,
@@ -105,7 +109,7 @@ impl Id {
             Id::Themes | Id::Modes | Id::Layouts | Id::Fonts | Id::Bar | Id::Wallpaper => Some(Id::SetLook),
             Id::Input | Id::Keys => Some(Id::SetInput),
             Id::Screens | Id::Audio | Id::Bluetooth | Id::Devices | Id::Drivers => Some(Id::SetHardware),
-            Id::General | Id::Prefer | Id::Notes | Id::Trash | Id::System | Id::Autostart => Some(Id::SetSystem),
+            Id::General | Id::Prefer | Id::Notes | Id::Trash | Id::System | Id::Autostart | Id::Update | Id::Cleaner => Some(Id::SetSystem),
             Id::Pick => None,
             Id::ThemeNew | Id::ThemeImport => Some(Id::Themes),
             Id::ColorPick => Some(Id::ThemeNew),
@@ -144,6 +148,8 @@ impl Id {
             Id::Wallpaper => "Tapeta",
             Id::Devices => "Urzadzenia",
             Id::Drivers => "Sterowniki",
+            Id::Update => "Aktualizacje",
+            Id::Cleaner => "Czyszczenie",
             Id::ThemeNew => "Utworz motyw",
             Id::ColorPick => "Kolor",
             Id::ThemeImport => "Importuj motyw",
@@ -295,8 +301,8 @@ fn group(items: &[(&str, Id)]) -> Vec<Entry> {
 
 /// The leaf panels that the settings search reads, in the order of the groups. Not in it: the shortcut editor (it is
 /// its own search), the trash and Bluetooth (they list things, not settings).
-const FIND_PANELS: [Id; 15] = [
-    Id::Themes, Id::Modes, Id::Layouts, Id::Fonts, Id::Bar, Id::Wallpaper, Id::Input, Id::Screens, Id::Audio, Id::Devices, Id::Drivers, Id::General, Id::Autostart, Id::Prefer, Id::Notes,
+const FIND_PANELS: [Id; 17] = [
+    Id::Themes, Id::Modes, Id::Layouts, Id::Fonts, Id::Bar, Id::Wallpaper, Id::Input, Id::Screens, Id::Audio, Id::Devices, Id::Drivers, Id::General, Id::Autostart, Id::Prefer, Id::Notes, Id::Update, Id::Cleaner,
 ];
 
 /// Every wanted app in ONE list, under a title per kind that has any entries.
@@ -469,7 +475,7 @@ impl Desktop {
             Id::SetLook => group(&[("Motyw", Id::Themes), ("Tryb", Id::Modes), ("Uklad okien", Id::Layouts), ("Czcionki", Id::Fonts), ("Pasek", Id::Bar), ("Tapeta", Id::Wallpaper)]),
             Id::SetInput => group(&[("Klawiatura i mysz", Id::Input), ("Skroty", Id::Keys)]),
             Id::SetHardware => group(&[("Ekrany", Id::Screens), ("Dzwiek", Id::Audio), ("Bluetooth", Id::Bluetooth), ("Urzadzenia: glosniki, mikrofony, kamery, jasnosc", Id::Devices), ("Sterowniki", Id::Drivers)]),
-            Id::SetSystem => group(&[("Ogolne", Id::General), ("Autostart", Id::Autostart), ("Aplikacje", Id::Prefer), ("Powiadomienia", Id::Notes), ("Kosz", Id::Trash), ("Config i silniki", Id::System)]),
+            Id::SetSystem => group(&[("Ogolne", Id::General), ("Autostart", Id::Autostart), ("Aplikacje", Id::Prefer), ("Powiadomienia", Id::Notes), ("Kosz", Id::Trash), ("Aktualizacje", Id::Update), ("Czyszczenie dysku", Id::Cleaner), ("Config i silniki", Id::System)]),
             Id::Find => self.find_entries(),
             Id::Pick => self.menu.as_ref().and_then(|m| m.stack.iter().rev().find(|l| l.id == Id::Pick).map(|l| l.items.clone())).unwrap_or_default(),
             Id::General => self.general_entries(),
@@ -484,6 +490,8 @@ impl Desktop {
             Id::Wallpaper => self.wallpaper_entries(),
             Id::Devices => self.devices_entries(),
             Id::Drivers => self.drivers_entries(),
+            Id::Update => update_entries(),
+            Id::Cleaner => cleaner_entries(),
             Id::ThemeNew => self.theme_new_entries(),
             Id::ColorPick => self.color_pick_entries(),
             Id::ThemeImport => self.theme_import_entries(),
@@ -1268,6 +1276,13 @@ mod tests {
     }
 
     #[test]
+    fn the_package_manager_is_the_first_one_found_and_none_is_handled() {
+        let (name, check, up) = pm_commands(|b| b == "pacman" || b == "apt").unwrap();
+        assert_eq!((name, check, up), ("pacman", Some("checkupdates"), "sudo pacman -Syu"));
+        assert!(pm_commands(|_| false).is_none());
+    }
+
+    #[test]
     fn a_choice_row_shows_the_current_value() {
         let c = Entry { label: "Uklad".into(), act: Act::Choice { cur: "grid".into(), sel: 0, options: vec![e("grid", Act::Nop)] } };
         assert_eq!(c.row(), Row::Choice("Uklad".into(), "grid".into()));
@@ -1315,6 +1330,65 @@ mod tests {
 }
 
 /// Bluetooth is Blueman's job: its own windows open from here, one entry per panel it has installed.
+fn have_cmd(c: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(c).is_file()))
+}
+
+/// A command in a terminal that stays open to be read afterwards.
+fn in_term(cmd: &str) -> Act {
+    Act::Run { cmd: format!("{cmd}; printf '\\n[Enter zamyka]'; read _"), terminal: true }
+}
+
+/// (check, upgrade) for the package manager found first on PATH.
+fn pm_commands(have: impl Fn(&str) -> bool) -> Option<(&'static str, Option<&'static str>, &'static str)> {
+    [
+        ("xbps-install", "xbps", Some("xbps-install -Sun"), "sudo xbps-install -Su"),
+        ("pacman", "pacman", Some("checkupdates"), "sudo pacman -Syu"),
+        ("apt", "apt", Some("apt list --upgradable"), "sudo apt update && sudo apt upgrade"),
+        ("dnf", "dnf", Some("dnf check-update"), "sudo dnf upgrade"),
+        ("zypper", "zypper", Some("zypper list-updates"), "sudo zypper dup"),
+        ("apk", "apk", Some("apk version -l '<'"), "sudo apk upgrade -U"),
+    ]
+    .into_iter()
+    .find(|(bin, ..)| have(bin))
+    .map(|(_, name, check, up)| (name, check, up))
+}
+
+/// Settings > Aktualizacje: check and upgrade through the system's own package manager, in a terminal so that the
+/// password prompt and the output are visible. Nothing runs unless an entry is chosen.
+fn update_entries() -> Vec<Entry> {
+    let mut v = vec![head("uruchamiane w terminalu; system pyta o haslo sam")];
+    match pm_commands(have_cmd) {
+        Some((name, check, up)) => {
+            if let Some(c) = check {
+                v.push(e(&format!("Sprawdz aktualizacje ({name})"), in_term(c)));
+            }
+            v.push(e(&format!("Zaktualizuj system ({name})"), in_term(up)));
+        }
+        None => v.push(e("Nie znaleziono menedzera pakietow (xbps, pacman, apt, dnf, zypper, apk)", Act::Nop)),
+    }
+    if have_cmd("flatpak") {
+        v.push(e("Zaktualizuj Flatpaki", in_term("flatpak update")));
+    }
+    if have_cmd("rustup") {
+        v.push(e("Zaktualizuj Rusta (rustup)", in_term("rustup update")));
+    }
+    v
+}
+
+/// Settings > Czyszczenie dysku: the `cleaner` tool, which lists what would go and asks once before deleting anything.
+fn cleaner_entries() -> Vec<Entry> {
+    if have_cmd("cleaner") {
+        vec![
+            head("cleaner pokazuje co zniknie i pyta raz; nic nie jest kasowane przed potwierdzeniem"),
+            e("Znajdz zbedne pliki i posprzataj (cleaner)", in_term("cleaner")),
+            e("Co zajmuje miejsce: ~ (du, 15 najwiekszych)", in_term("du -h -d1 ~ 2>/dev/null | sort -rh | head -15")),
+        ]
+    } else {
+        vec![e("cleaner nie jest zainstalowany (Gucixdev/bash: src/cleaner); dodaj go do PATH", Act::Nop)]
+    }
+}
+
 fn bluetooth_entries() -> Vec<Entry> {
     const PANELS: [(&str, &str); 4] = [
         ("blueman-manager", "Urzadzenia: parowanie, polaczenia, wysylanie plikow"),

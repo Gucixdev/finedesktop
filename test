@@ -218,6 +218,10 @@ for pan in wallpaper devices drivers screens input; do
   ctl menu open $pan >/dev/null; ctl menu list | head -3 | grep -q . && ok "panel $pan opens" || bad "panel $pan"
   ctl menu key esc >/dev/null
 done
+ctl menu open update >/dev/null; ctl menu list | head -1 | grep -q 'Menu > Ustawienia > System > Aktualizacje$' && ok "update panel sits under System" || bad "update panel"
+ctl menu key esc >/dev/null
+ctl menu open cleaner >/dev/null; ctl menu list | head -1 | grep -q 'Czyszczenie' && ok "cleaner panel opens" || bad "cleaner panel"
+ctl menu key esc >/dev/null
 ctl menu open input >/dev/null; ctl menu list | grep -q 'Przyspieszenie: \[adaptacyjne v\]' && ok "input panel has the acceleration dropdown" || bad "input accel"
 ctl menu type Przyspieszenie >/dev/null; ctl menu key enter >/dev/null; ctl menu list | grep -q 'plaskie' && ok "a dropdown opens its options" || bad "dropdown options"
 ctl menu key down >/dev/null; ctl menu key enter >/dev/null
