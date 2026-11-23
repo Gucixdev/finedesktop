@@ -159,6 +159,19 @@ pub struct Config {
     pub clock_format: String,
     pub date_format: String,
     pub font_scale: i32,
+    /// `anim_speed`: 0.25..4, 1 = the default springs, 2 = twice as fast
+    pub anim_speed: f32,
+    /// `anim_bounce`: 0..1 overshoot of the springs (0.5 = the default small one)
+    pub anim_bounce: f32,
+    /// `output = NAME mode=WxH@HZ pos=X,Y off`: per connector, read by the DRM backend at start
+    pub outputs: Vec<crate::components::outputs::OutputCfg>,
+    /// `kb_repeat_rate` (keys per second) and `kb_repeat_delay` (ms before repeating)
+    pub kb_repeat_rate: i32,
+    pub kb_repeat_delay: i32,
+    /// `pointer_speed` -1..1 (0 = the device default), `natural_scroll`, `tap_to_click`: applied to every libinput device
+    pub pointer_speed: f32,
+    pub natural_scroll: bool,
+    pub tap_to_click: bool,
     /// `font = PATH`: a .bdf or .psf bitmap font; empty or unreadable = the built-in Terminus 8x16
     pub font: String,
     /// height of the tab/stack bar in px; 0 = one text row plus 2 (slimmer than the status bar)
@@ -216,6 +229,14 @@ impl Default for Config {
             clock_format: "%H:%M:%S".into(),
             date_format: "%Y-%m-%d".into(),
             font_scale: 1,
+            anim_speed: 1.0,
+            anim_bounce: 0.5,
+            outputs: Vec::new(),
+            kb_repeat_rate: 25,
+            kb_repeat_delay: 200,
+            pointer_speed: 0.0,
+            natural_scroll: false,
+            tap_to_click: false,
             font: String::new(),
             tab_height: 0,
             widgets: true,
@@ -399,6 +420,18 @@ impl Config {
             "bar_interval" => self.bar_interval = n(val)?.clamp(1, 3600) as u64,
             "font" => self.font = expand_home(val),
             "font_scale" => self.font_scale = n(val)?.clamp(1, 4),
+            "output" => {
+                let c = crate::components::outputs::OutputCfg::parse(val)?;
+                self.outputs.retain(|o| o.name != c.name);
+                self.outputs.push(c);
+            }
+            "kb_repeat_rate" => self.kb_repeat_rate = n(val)?.clamp(1, 100),
+            "kb_repeat_delay" => self.kb_repeat_delay = n(val)?.clamp(100, 1000),
+            "pointer_speed" => self.pointer_speed = f(val)?.clamp(-1.0, 1.0),
+            "natural_scroll" => self.natural_scroll = matches!(val, "on" | "true" | "yes" | "1"),
+            "tap_to_click" => self.tap_to_click = matches!(val, "on" | "true" | "yes" | "1"),
+            "anim_speed" => self.anim_speed = f(val)?.clamp(0.25, 4.0),
+            "anim_bounce" => self.anim_bounce = f(val)?.clamp(0.0, 1.0),
             "tab_height" => self.tab_height = n(val)?.clamp(0, 200),
             "welcome_auto" => self.panels = matches!(val, "on" | "true" | "yes" | "1"),
             "welcome_keys" => self.panel_keys = matches!(val, "on" | "true" | "yes" | "1"),

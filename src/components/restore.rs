@@ -93,6 +93,42 @@ pub fn args(raw: &[u8]) -> Vec<String> {
     v
 }
 
+/// The socket of the terminal sessions of `fd-shell` (session/fd-shell): its own tmux server, apart from the user's tmux.
+const TMUX_SOCKET: &str = "finedesktop";
+
+/// The session name in the command line of an `fd-shell` tmux client (`tmux -L finedesktop ... new-session -A -s NAME`);
+/// None for any other program, including the user's own tmux on the default socket.
+pub fn tmux_name(argv: &[String]) -> Option<String> {
+    let prog = argv.first()?;
+    if Path::new(prog).file_name()? != "tmux" {
+        return None;
+    }
+    let after = |flag: &str| argv.iter().position(|a| a == flag).and_then(|i| argv.get(i + 1));
+    (after("-L")? == TMUX_SOCKET).then_some(())?;
+    after("-s").filter(|n| valid_name(n)).cloned()
+}
+
+/// The tmux session behind a terminal window: the `fd-shell` client somewhere below the window's process.
+pub fn tmux_of_pid(pid: i32) -> Option<String> {
+    let mut todo = vec![pid];
+    let mut seen = Vec::new();
+    while let Some(p) = todo.pop() {
+        if seen.contains(&p) || seen.len() > 64 {
+            continue;
+        }
+        seen.push(p);
+        if let Some(n) = std::fs::read(format!("/proc/{p}/cmdline")).ok().and_then(|raw| tmux_name(&args(&raw))) {
+            return Some(n);
+        }
+        for task in std::fs::read_dir(format!("/proc/{p}/task")).into_iter().flatten().flatten() {
+            if let Ok(kids) = std::fs::read_to_string(task.path().join("children")) {
+                todo.extend(kids.split_whitespace().filter_map(|k| k.parse::<i32>().ok()));
+            }
+        }
+    }
+    None
+}
+
 fn program_exists(p: &str) -> bool {
     if p.contains('/') {
         return Path::new(p).is_file();
@@ -160,6 +196,18 @@ impl Desktop {
         client.get_credentials(&self.display_handle).ok().map(|c| c.pid)
     }
 
+    /// The tmux session of every window that runs in one (terminal windows started through `fd-shell`).
+    pub fn tmux_names(&self) -> Vec<String> {
+        self.mons.iter().flat_map(|m| m.ws.iter()).flat_map(|ws| ws.clients.iter()).filter_map(|w| self.client_pid(w)).filter_map(tmux_of_pid).collect()
+    }
+
+    /// A terminal window is being closed on purpose: its session ends with it (a restart, by contrast, keeps it).
+    pub fn tmux_kill_for(&self, w: &smithay::desktop::Window) {
+        if let Some(name) = self.client_pid(w).and_then(tmux_of_pid) {
+            crate::keys::spawn(&format!("tmux -L {TMUX_SOCKET} kill-session -t {}", quote(&name)));
+        }
+    }
+
     /// Every window with an app id, in monitor / workspace / stacking order. `full` also reads the command and
     /// working folder (cheap place-only rows are enough to notice a change).
     pub fn session_rows(&self, full: bool) -> Vec<Row> {
@@ -178,6 +226,10 @@ impl Desktop {
                         let argv = pid.and_then(|p| std::fs::read(format!("/proc/{p}/cmdline")).ok()).map(|raw| args(&raw)).unwrap_or_default();
                         let entry = entries.get_or_insert_with(apps::scan).iter().find(|a| a.id.to_lowercase() == format!("{}.desktop", r.app.to_lowercase())).map(|a| a.exec.clone());
                         r.cmd = command(&argv, entry.as_deref()).unwrap_or_default();
+                        // a terminal in a tmux session comes back by attaching to it: what ran there is still running
+                        if let (Some(name), Some(prog)) = (pid.and_then(tmux_of_pid), argv.first()) {
+                            r.cmd = format!("{} -e fd-shell {}", quote(prog), quote(&name));
+                        }
                         r.cwd = pid.and_then(|p| std::fs::read_link(format!("/proc/{p}/cwd")).ok()).map(|p| p.display().to_string()).unwrap_or_default();
                     }
                     rows.push(r);
@@ -260,7 +312,8 @@ pub struct Restore {
 
 impl Restore {
     fn save_if_changed(&mut self, d: &mut Desktop) {
-        let sig = render(&d.session_rows(false));
+        // the tmux names are part of the signature: a terminal's session appears a moment after its window does
+        let sig = render(&d.session_rows(false)) + &d.tmux_names().join(",");
         if sig == self.last {
             return;
         }
@@ -343,6 +396,18 @@ mod tests {
         assert_eq!(command(&sandbox, Some("/usr/bin/flatpak run org.mozilla.firefox")).as_deref(), Some("/usr/bin/flatpak run org.mozilla.firefox"));
         assert_eq!(command(&sandbox, None), None);
         assert_eq!(command(&[], Some("")), None);
+    }
+
+    #[test]
+    fn only_the_fd_shell_tmux_counts() {
+        let a = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        assert_eq!(tmux_name(&a("tmux -L finedesktop -f /x/tmux.conf new-session -A -s fd-12-3")).as_deref(), Some("fd-12-3"));
+        assert_eq!(tmux_name(&a("/usr/bin/tmux -L finedesktop new-session -A -s work")).as_deref(), Some("work"));
+        assert_eq!(tmux_name(&a("tmux new-session -A -s work")), None, "the user's own tmux is not ours");
+        assert_eq!(tmux_name(&a("tmux -L other new -s x")), None);
+        assert_eq!(tmux_name(&a("foot -s x")), None);
+        assert_eq!(tmux_name(&a("tmux -L finedesktop new -s a/b")), None);
+        assert_eq!(tmux_name(&[]), None);
     }
 
     #[test]

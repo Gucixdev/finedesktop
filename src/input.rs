@@ -45,6 +45,11 @@ fn menu_key(sym: smithay::input::keyboard::Keysym, ctrl: bool) -> String {
     }
 }
 
+/// Shift, Control, Caps, Alt, Super, Hyper, Meta and the level / group shifts: keys that only change the modifier state.
+fn is_modifier(raw: u32) -> bool {
+    (0xffe1..=0xffee).contains(&raw) || matches!(raw, 0xfe01..=0xfe13 | 0xff7f)
+}
+
 impl Desktop {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         match event {
@@ -61,8 +66,14 @@ impl Desktop {
                     |state, mods, handle| {
                         // while the menu is open it takes every key (Super+binds still work, so Super+W closes it)
                         if state.menu.is_some() && !mods.logo {
+                            // Releases and modifiers still reach the client: swallowing the release of Super (let go after
+                            // the launcher opened) left the app thinking Super was held, and typing stopped working.
                             if event.state() != KeyState::Pressed {
-                                return FilterResult::Intercept(crate::config::Action::Menu("noop".into()));
+                                state.menu_hold = None;
+                                return FilterResult::Forward;
+                            }
+                            if is_modifier(handle.modified_sym().raw()) {
+                                return FilterResult::Forward;
                             }
                             return FilterResult::Intercept(crate::config::Action::Menu(menu_key(handle.modified_sym(), mods.ctrl)));
                         }
@@ -87,6 +98,9 @@ impl Desktop {
                     },
                 );
                 if let Some(a) = action {
+                    if let crate::config::Action::Menu(c) = &a {
+                        self.menu_hold_press(c);
+                    }
                     self.run_action(a);
                 }
             }
@@ -210,8 +224,14 @@ impl Desktop {
 
 #[cfg(test)]
 mod tests {
-    use super::menu_key;
+    use super::{is_modifier, menu_key};
     use smithay::input::keyboard::Keysym;
+
+    #[test]
+    fn modifier_keys_are_forwarded_not_swallowed() {
+        assert!(is_modifier(0xffeb) && is_modifier(0xffe1) && is_modifier(0xffe9)); // Super_L, Shift_L, Alt_L
+        assert!(!is_modifier(0xff52) && !is_modifier(0x61)); // Up, a
+    }
 
     #[test]
     fn menu_keys_map_to_ctl_commands() {

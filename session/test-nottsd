@@ -1,0 +1,26 @@
+#!/bin/sh
+# nottsd on a throwaway session bus: notify-send / busctl in, `ctl notify send` arguments out (a logger stands in for ctl).
+cd "$(dirname "$0")" || exit 1
+t=$(mktemp -d) || exit 1
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/ctl.log"\n' "$t" > "$t/ctl"; chmod +x "$t/ctl"
+export FD_NOTTS_CTL="$t/ctl" T="$t" NOTTSD="$PWD/nottsd"
+fail=0
+ok()  { echo "ok   $1"; }
+bad() { echo "FAIL $1"; fail=1; }
+dbus-run-session -- sh -c '
+  "$NOTTSD" & pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do busctl --user list 2>/dev/null | grep -q org.freedesktop.Notifications && break; sleep 0.2; done
+  busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications GetServerInformation > "$T/info"
+  notify-send -a Discord -u critical -c im.received "Ada" "hello <b>there</b> &amp; bye
+second line" 
+  notify-send "Plain summary only"
+  busctl --user call -- org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications Notify susssasa{sv}i "tele gram" 0 "" "-dash" "" 0 1 urgency y 0 -1 > "$T/id"
+  sleep 0.5
+  kill $pid
+'
+grep -q finedesktop-notts "$t/info" && ok "server information" || bad "server information"
+grep -q -- '-a Discord -u critical -t im.received -- Ada: hello there & bye second line' "$t/ctl.log" && ok "app, urgency, category and text arrive flat" || bad "first note"
+grep -q -- '-u normal -- Plain summary only' "$t/ctl.log" && ok "a bare notify-send works" || bad "bare note"
+grep -q -- '-a tele_gram -u low -- -dash' "$t/ctl.log" && ok "spaces in the app and a leading dash are safe" || bad "odd note"
+grep -q '^u ' "$t/id" && ok "Notify returns an id" || bad "no id"
+[ $fail = 0 ] && echo "ALL OK" || { echo "FAILED (logs in $t)"; cat "$t/ctl.log" 2>/dev/null; exit 1; }

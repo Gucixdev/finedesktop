@@ -1,0 +1,28 @@
+#!/bin/sh
+# fd-shell [NAME] - the shell of a terminal window, kept alive in its own tmux session, so what ran in the terminal
+# survives a desktop restart: `ctl session restart` saves NAME with the window and starts `foot -e fd-shell NAME`
+# again, which attaches to the same session (scrollback and running programs included).
+#   set it as the terminal's shell:   foot.ini   shell=~/.local/bin/fd-shell
+#   a new window gets a new session name; an existing NAME is attached; `exit` ends the session and the window.
+# Own tmux server (socket "finedesktop", config ~/.config/finedesktop/tmux.conf), so your own tmux is not touched.
+# Degrades: no tmux, or tmux dying at once, and you get your plain shell.
+# Env: FD_TMUX (tmux binary), FD_TMUX_SOCKET (socket name), FD_TMUX_CONF (config file).
+tmux=${FD_TMUX:-tmux}
+sock=${FD_TMUX_SOCKET:-finedesktop}
+conf=${FD_TMUX_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/finedesktop/tmux.conf}
+plain() { exec "${SHELL:-/bin/sh}"; }
+
+command -v "$tmux" >/dev/null 2>&1 || plain
+name=${1:-fd-$(date +%s)-$$}
+case $name in *[!A-Za-z0-9_.-]*|'') plain ;; esac
+set -- -L "$sock"
+[ -f "$conf" ] && set -- "$@" -f "$conf"
+unset TMUX
+start=$(date +%s)
+"$tmux" "$@" new-session -A -s "$name"
+code=$?
+# tmux failed within a moment (bad config, no terminfo): give a shell instead of a closing window
+if [ "$code" -ne 0 ] && [ $(( $(date +%s) - start )) -lt 2 ]; then
+    plain
+fi
+exit "$code"

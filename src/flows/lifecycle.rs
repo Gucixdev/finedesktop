@@ -125,6 +125,8 @@ impl Desktop {
             return;
         }
         let dt = dt.min(0.25);
+        self.menu_hold_step(dt);
+        self.draft_gc();
         self.each(|c, d| c.update(d, dt));
         if self.bus.listening("update") {
             self.emit(Event::hot("update", dt));

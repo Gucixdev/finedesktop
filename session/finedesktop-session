@@ -8,6 +8,8 @@ export FLATPAK_USER_DIR=/data/flatpak
 mkdir -p "$HOME/.cache"
 bin=$HOME/.local/bin/finedesktop
 [ -x "$bin" ] || bin=$(command -v finedesktop) || { echo "finedesktop not installed" >&2; exit 1; }
+# D-Bus notifications (notify-send, Discord, Telegram, Element) land in the notification center; a second copy exits at once
+command -v nottsd >/dev/null 2>&1 && { nottsd >>"$HOME/.cache/nottsd.log" 2>&1 & }
 "$bin" >"$HOME/.cache/finedesktop.log" 2>&1
 code=$?
 # only the deliberate 75 restarts, at most 5 times in a row: a crash loop must not lock him out of the machine

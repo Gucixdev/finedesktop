@@ -1,5 +1,5 @@
-//! The launcher is the menu panel in its dmenu shape (`ctl menu launch`, Super+P): one list with your apps and every
-//! executable on PATH, type to filter, Enter runs it, and a line that matches nothing is run as typed.
+//! The launcher's search list (the `Id::Run` level): your apps and every executable on PATH, type to filter, Enter runs it, and a line that
+//! matches nothing is run as typed. `ctl menu launch` (Super+W) opens the root list; typing there opens this list under it.
 
 use std::{collections::BTreeSet, os::unix::fs::PermissionsExt};
 

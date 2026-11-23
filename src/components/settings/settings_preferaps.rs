@@ -8,7 +8,25 @@ use std::collections::BTreeMap;
 use crate::{Desktop, components::apps::App};
 
 /// The roles, in the order the menu shows them.
-pub const ROLES: [&str; 4] = ["terminal", "browser", "editor", "files"];
+pub const ROLES: [&str; 12] = ["terminal", "browser", "editor", "files", "office", "pdf", "image", "video", "audio", "archive", "cad", "mail"];
+
+/// The first four are programs used by binds (`$terminal` ...); the rest say what opens a kind of file.
+pub const PROGRAMS: usize = 4;
+
+/// The formats a file role covers, for the menu label.
+pub fn formats(role: &str) -> &'static str {
+    match role {
+        "office" => "docx doc odt rtf xlsx xls ods csv pptx ppt odp",
+        "pdf" => "pdf epub djvu",
+        "image" => "png jpg gif webp svg bmp",
+        "video" => "mp4 mkv webm mov avi",
+        "audio" => "mp3 flac ogg wav",
+        "archive" => "zip tar gz xz 7z rar",
+        "cad" => "stl obj 3mf step blend",
+        "mail" => "mailto:",
+        _ => "",
+    }
+}
 
 /// Generic defaults that work anywhere: the system's own openers and `$EDITOR`. Your own choices go in your config
 /// (`prefer_browser = firefox`) or are made in the menu.
@@ -25,6 +43,18 @@ pub fn mimes(role: &str) -> &'static [&'static str] {
         "browser" => &["x-scheme-handler/http", "x-scheme-handler/https", "text/html", "application/xhtml+xml"],
         "files" => &["inode/directory"],
         "editor" => &["text/plain"],
+        "office" => &[
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword", "application/vnd.oasis.opendocument.text", "application/rtf",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", "application/vnd.oasis.opendocument.spreadsheet", "text/csv",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.ms-powerpoint", "application/vnd.oasis.opendocument.presentation",
+        ],
+        "pdf" => &["application/pdf", "application/epub+zip", "image/vnd.djvu"],
+        "image" => &["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"],
+        "video" => &["video/mp4", "video/x-matroska", "video/webm", "video/quicktime", "video/x-msvideo"],
+        "audio" => &["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav"],
+        "archive" => &["application/zip", "application/x-tar", "application/gzip", "application/x-xz", "application/x-7z-compressed", "application/vnd.rar"],
+        "cad" => &["model/stl", "model/obj", "model/3mf", "model/step", "application/sla", "application/x-blender"],
+        "mail" => &["x-scheme-handler/mailto"],
         _ => &[],
     }
 }
@@ -149,6 +179,10 @@ mod tests {
         assert!(mimes("browser").contains(&"x-scheme-handler/https"));
         assert_eq!(mimes("files"), ["inode/directory"]);
         assert!(mimes("terminal").is_empty());
+        for r in &ROLES[PROGRAMS..] {
+            assert!(!mimes(r).is_empty() && !formats(r).is_empty(), "{r} covers some formats");
+        }
+        assert!(mimes("cad").contains(&"model/stl") && formats("office").contains("docx"));
     }
 
     #[test]

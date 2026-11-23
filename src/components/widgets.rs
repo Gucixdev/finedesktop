@@ -15,9 +15,9 @@ use std::{
 
 use crate::config::Config;
 
-pub const BUILTIN: [&str; 19] = [
+pub const BUILTIN: [&str; 23] = [
     "tags", "layout", "|", "spk", "vol", "mic", "cpu", "gpu", "ram", "vram", "bat", "date", "clock", "disk", "disk-bar", "cpu-graph", "ram-graph", "gpu-graph",
-    "vram-graph",
+    "vram-graph", "swap", "swap-graph", "disks", "stats",
 ];
 
 /// Samples kept for the mini graphs (one per `bar_interval`, so 30 s by default).
@@ -41,8 +41,12 @@ pub struct Shared {
     pub gpu: Option<(u32, u32)>,
     /// (total, free) bytes of the `disk =` path
     pub disk: Option<(u64, u64)>,
+    /// swap used %, None without swap
+    pub swap: Option<u32>,
+    /// every real disk (see `stats`)
+    pub disks: Vec<super::stats::Disk>,
     disk_path: String,
-    /// last `HIST` samples (0-100) per graph: cpu ram gpu vram
+    /// last `HIST` samples (0-100) per graph: cpu ram gpu vram swap
     pub hist: HashMap<&'static str, Vec<u8>>,
     pub text: HashMap<String, String>,
     jobs: Vec<Job>,
@@ -203,8 +207,12 @@ impl Widgets {
                         _ => 0,
                     };
                     prev = cur;
-                    let (ram, bat) = (read_ram().unwrap_or(0), read_bat());
+                    let (ram, bat, swap) = (read_ram().unwrap_or(0), read_bat(), super::stats::read_swap());
                     let mut g = sh.lock().unwrap();
+                    g.swap = swap;
+                    if let Some(sw) = swap {
+                        push_hist(g.hist.entry("swap").or_default(), sw);
+                    }
                     g.cpu = cpu;
                     g.ram = ram;
                     g.bat = bat;
@@ -232,7 +240,10 @@ impl Widgets {
                     last_disk = Instant::now();
                     let path = sh.lock().unwrap().disk_path.clone();
                     let d = read_disk(if path.is_empty() { "/" } else { &path });
-                    sh.lock().unwrap().disk = d;
+                    let disks = super::stats::read_disks();
+                    let mut g = sh.lock().unwrap();
+                    g.disk = d;
+                    g.disks = disks;
                 }
                 if enabled {
                     for j in jobs {

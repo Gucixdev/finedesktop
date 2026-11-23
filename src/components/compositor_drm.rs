@@ -40,7 +40,7 @@ use smithay::{
     utils::{DeviceFd, Transform},
 };
 
-use crate::Desktop;
+use crate::{components::outputs, Desktop};
 
 type Compositor = DrmCompositor<
     GbmAllocator<DrmDeviceFd>,
@@ -147,18 +147,37 @@ pub fn init(event_loop: &mut EventLoop<Desktop>, state: &mut Desktop) -> Result<
             tracing::warn!("no free crtc for {:?}", info.interface());
             continue;
         };
-        let mode = info.modes().iter().find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED)).unwrap_or(&info.modes()[0]);
-        let wl_mode = Mode::from(*mode);
         let name = format!("{}-{}", info.interface().as_str(), info.interface_id());
+        let want = state.config.outputs.iter().find(|o| o.name == name).cloned();
+        if want.as_ref().is_some_and(|o| o.off) {
+            tracing::info!("output {name} is off (config)");
+            continue;
+        }
+        let infos: Vec<outputs::ModeInfo> = info.modes().iter().map(|m| { let w = Mode::from(*m); (w.size.w, w.size.h, w.refresh) }).collect();
+        let chosen = want.as_ref().and_then(|o| o.mode).and_then(|m| outputs::pick_mode(&infos, m));
+        if want.as_ref().is_some_and(|o| o.mode.is_some()) && chosen.is_none() {
+            tracing::warn!("output {name}: the configured mode is not offered, using the preferred one");
+        }
+        let mode = chosen
+            .map(|i| &info.modes()[i])
+            .or_else(|| info.modes().iter().find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED)))
+            .unwrap_or(&info.modes()[0]);
+        let wl_mode = Mode::from(*mode);
         let (w, h) = info.size().unwrap_or((0, 0));
         let output = Output::new(
             name.clone(),
             PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: info.subpixel().into(), make: "Unknown".into(), model: "Unknown".into(), serial_number: "Unknown".into() },
         );
         let _global = output.create_global::<Desktop>(&state.display_handle);
+        for m in info.modes() {
+            output.add_mode(Mode::from(*m));
+        }
         output.set_preferred(wl_mode);
-        output.change_current_state(Some(wl_mode), None, None, Some((x, 0).into()));
-        x += wl_mode.size.w;
+        let at = want.as_ref().and_then(|o| o.pos).unwrap_or((x, 0));
+        output.change_current_state(Some(wl_mode), None, None, Some(at.into()));
+        if want.as_ref().and_then(|o| o.pos).is_none() {
+            x += wl_mode.size.w;
+        }
 
         let surface = drm.create_surface(crtc, *mode, &[info.handle()])?;
         let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
@@ -188,8 +207,13 @@ pub fn init(event_loop: &mut EventLoop<Desktop>, state: &mut Desktop) -> Result<
     libinput.udev_assign_seat(&seat).map_err(|_| "libinput: cannot assign seat")?;
     let mut li = libinput.clone();
     event_loop.handle().insert_source(LibinputInputBackend::new(libinput.clone()), |event, _, state| {
-        if !matches!(event, InputEvent::DeviceAdded { .. } | InputEvent::DeviceRemoved { .. }) {
-            state.process_input_event(event);
+        match event {
+            InputEvent::DeviceAdded { device } => {
+                state.input_devices.push(device);
+                state.apply_input();
+            }
+            InputEvent::DeviceRemoved { device } => state.input_devices.retain(|d| d != &device),
+            event => state.process_input_event(event),
         }
     })?;
 

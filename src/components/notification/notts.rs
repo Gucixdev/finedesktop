@@ -224,6 +224,10 @@ fn parse_send(arg: &str) -> Result<(String, Urgency, String, String), String> {
     let (mut app, mut urg, mut tag) = ("ctl".to_string(), Urgency::Normal, String::new());
     let mut rest = arg.trim_start();
     while let Some(r) = rest.strip_prefix('-') {
+        if r == "-" || r.starts_with("- ") {
+            rest = r[1..].trim_start(); // `--` ends the flags: the text may start with a dash
+            break;
+        }
         let (flag, after) = r.split_once(char::is_whitespace).unwrap_or((r, ""));
         let after = after.trim_start();
         let (val, after) = after.split_once(char::is_whitespace).unwrap_or((after, ""));
@@ -443,6 +447,8 @@ mod tests {
         assert!(parse_send("-u loud x").is_err());
         assert!(parse_send("-a x").is_err());
         assert!(parse_send("-z q text").is_err());
+        let (app, _, _, text) = parse_send("-a x -- -dash and more").unwrap();
+        assert_eq!((app.as_str(), text.as_str()), ("x", "-dash and more"));
     }
 
     #[test]
