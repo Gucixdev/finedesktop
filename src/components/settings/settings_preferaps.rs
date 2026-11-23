@@ -1,4 +1,4 @@
-//! Preferred applications: which program is "the" terminal, browser, editor and file manager.
+//! Preferred applications: which program is "the" terminal, browser, editor, file manager and shell (bash).
 //! Each role is one config line `prefer_<role> = COMMAND`, usable in binds as `$terminal $browser $editor $files`,
 //! readable and settable with `ctl prefer [ROLE [COMMAND]]`, and pickable from the menu (Ustawienia > Preferowane
 //! aplikacje). Setting a role from the menu or ctl also writes the line into the user config, nothing else is touched.
@@ -8,10 +8,11 @@ use std::collections::BTreeMap;
 use crate::{Desktop, components::apps::App};
 
 /// The roles, in the order the menu shows them.
-pub const ROLES: [&str; 12] = ["terminal", "browser", "editor", "files", "office", "pdf", "image", "video", "audio", "archive", "cad", "mail"];
+pub const ROLES: [&str; 13] = ["terminal", "browser", "editor", "files", "shell", "office", "pdf", "image", "video", "audio", "archive", "cad", "mail"];
 
-/// The first four are programs used by binds (`$terminal` ...); the rest say what opens a kind of file.
-pub const PROGRAMS: usize = 4;
+/// The first five are programs used by binds (`$terminal` ... `$shell`); the rest say what opens a kind of file.
+/// `shell` is the program a terminal window runs (`fd-shell` asks for it); there is no shell of our own, it is bash.
+pub const PROGRAMS: usize = 5;
 
 /// The formats a file role covers, for the menu label.
 pub fn formats(role: &str) -> &'static str {
@@ -31,7 +32,7 @@ pub fn formats(role: &str) -> &'static str {
 /// Generic defaults that work anywhere: the system's own openers and `$EDITOR`. Your own choices go in your config
 /// (`prefer_browser = firefox`) or are made in the menu.
 pub fn defaults() -> BTreeMap<String, String> {
-    [("browser", "xdg-open https://"), ("editor", "$terminal -e ${EDITOR:-vi}"), ("files", "xdg-open .")]
+    [("shell", "bash"), ("browser", "xdg-open https://"), ("editor", "$terminal -e ${EDITOR:-vi}"), ("files", "xdg-open .")]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()

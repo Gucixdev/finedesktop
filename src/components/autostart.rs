@@ -30,6 +30,7 @@ impl crate::flows::lifecycle::Component for Autostart {
         for cmd in d.config.exec.clone() {
             crate::keys::spawn(&cmd);
         }
+        d.wallpaper_apply();
         d.autostart_run();
     }
 }

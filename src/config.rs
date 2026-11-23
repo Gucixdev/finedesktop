@@ -172,6 +172,13 @@ pub struct Config {
     pub pointer_speed: f32,
     pub natural_scroll: bool,
     pub tap_to_click: bool,
+    /// `accel_profile = flat|adaptive`, `left_handed`, `middle_emulation`, `disable_while_typing`: libinput, every device that has them
+    pub accel_flat: bool,
+    pub left_handed: bool,
+    pub middle_emulation: bool,
+    pub disable_while_typing: bool,
+    /// picture shown by `swaybg` behind the windows (empty: the theme's background colour)
+    pub wallpaper: String,
     /// `font = PATH`: a .bdf or .psf bitmap font; empty or unreadable = the built-in Terminus 8x16
     pub font: String,
     /// height of the tab/stack bar in px; 0 = one text row plus 2 (slimmer than the status bar)
@@ -237,6 +244,11 @@ impl Default for Config {
             pointer_speed: 0.0,
             natural_scroll: false,
             tap_to_click: false,
+            accel_flat: false,
+            left_handed: false,
+            middle_emulation: false,
+            disable_while_typing: true,
+            wallpaper: String::new(),
             font: String::new(),
             tab_height: 0,
             widgets: true,
@@ -430,6 +442,11 @@ impl Config {
             "pointer_speed" => self.pointer_speed = f(val)?.clamp(-1.0, 1.0),
             "natural_scroll" => self.natural_scroll = matches!(val, "on" | "true" | "yes" | "1"),
             "tap_to_click" => self.tap_to_click = matches!(val, "on" | "true" | "yes" | "1"),
+            "accel_profile" => self.accel_flat = match val { "flat" => true, "adaptive" => false, _ => return Err("accel_profile is flat or adaptive".into()) },
+            "left_handed" => self.left_handed = matches!(val, "on" | "true" | "yes" | "1"),
+            "middle_emulation" => self.middle_emulation = matches!(val, "on" | "true" | "yes" | "1"),
+            "disable_while_typing" => self.disable_while_typing = matches!(val, "on" | "true" | "yes" | "1"),
+            "wallpaper" => self.wallpaper = expand_home(val),
             "anim_speed" => self.anim_speed = f(val)?.clamp(0.25, 4.0),
             "anim_bounce" => self.anim_bounce = f(val)?.clamp(0.0, 1.0),
             "tab_height" => self.tab_height = n(val)?.clamp(0, 200),

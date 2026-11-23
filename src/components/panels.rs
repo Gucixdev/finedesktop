@@ -66,12 +66,12 @@ pub fn typed_color(q: &str) -> Option<Rgb> {
     theme::parse_rgb(&if q.starts_with('#') { q.to_string() } else { format!("#{q}") }).ok()
 }
 
-fn mark(on: bool, name: &str) -> String {
+pub(crate) fn mark(on: bool, name: &str) -> String {
     if on { format!("* {name}") } else { format!("  {name}") }
 }
 
 /// A choice: one value of one config key, starred when it is the current one.
-fn choice(label: &str, key: &'static str, val: &str, cur: &str) -> Entry {
+pub(crate) fn choice(label: &str, key: &'static str, val: &str, cur: &str) -> Entry {
     e(&mark(cur == val, label), Act::Set { key, val: val.into() })
 }
 
@@ -274,6 +274,12 @@ impl Desktop {
         v.push(e("Naturalne przewijanie", Act::Toggle { key: "natural_scroll", on: c.natural_scroll }));
         v.push(e("Dotkniecie klika (touchpad)", Act::Toggle { key: "tap_to_click", on: c.tap_to_click }));
         v.push(e("Fokus za myszka", Act::Toggle { key: "focus_follows_mouse", on: c.focus_follows_mouse }));
+        v.push(head("mysz i touchpad: wiecej"));
+        v.push(choice("Przyspieszenie: adaptacyjne", "accel_profile", "adaptive", if c.accel_flat { "flat" } else { "adaptive" }));
+        v.push(choice("Przyspieszenie: plaskie (bez przyspieszenia, do gier)", "accel_profile", "flat", if c.accel_flat { "flat" } else { "adaptive" }));
+        v.push(e("Mysz dla leworecznych (zamienione przyciski)", Act::Toggle { key: "left_handed", on: c.left_handed }));
+        v.push(e("Srodkowy przycisk z dwoch naraz", Act::Toggle { key: "middle_emulation", on: c.middle_emulation }));
+        v.push(e("Touchpad: wylacz podczas pisania", Act::Toggle { key: "disable_while_typing", on: c.disable_while_typing }));
         v
     }
 
@@ -317,6 +323,7 @@ impl Desktop {
         for o in self.config.outputs.iter().filter(|o| o.off && !geos.iter().any(|g| g.0 == o.name)) {
             v.push(e(&format!("Wlacz {}", o.name), Act::Out(format!("{} on", o.name))));
         }
+        v.push(self.brightness_entry());
         v
     }
 

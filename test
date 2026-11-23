@@ -210,6 +210,17 @@ ctl notify log discord | grep -q 'ping from discord' && [ -f "$log/state/finedes
 ctl notify send -u loud x 2>&1 | grep -q '^error' && ok "bad urgency rejected" || bad "bad urgency"
 ctl notify clear discord >/dev/null; ctl notify apps | grep -q '^discord' && bad "clear one app" || ok "clear one app"
 ctl notify clear >/dev/null; ctl notify | grep -q 'no notifications' && ok "clear all" || bad "clear all"
+# hardware panels: they list something or say why not, and never break
+for pan in wallpaper devices drivers screens input; do
+  ctl menu open $pan >/dev/null; ctl menu list | head -3 | grep -q . && ok "panel $pan opens" || bad "panel $pan"
+  ctl menu key esc >/dev/null
+done
+ctl menu open input >/dev/null; ctl menu list | grep -q 'plaskie' && ok "input panel has the acceleration profile" || bad "input accel"
+ctl menu key esc >/dev/null
+ctl menu open prefer >/dev/null; ctl menu list | grep -q 'shell: ' && ok "preferred apps has the shell role" || bad "shell role"
+ctl menu key esc >/dev/null
+ctl layout tiled | grep -q '^ok' && ctl state | grep -q 'grid' && ok "tiled is the grid layout" || bad "tiled alias"
+ctl layout tile >/dev/null
 ctl menu open nonsense 2>&1 | grep -q '^error' && ok "bad menu id rejected" || bad "bad menu id"
 
 # the launcher opens on the root list; typing searches everything, erasing it all comes back

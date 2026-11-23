@@ -10,7 +10,10 @@
 tmux=${FD_TMUX:-tmux}
 sock=${FD_TMUX_SOCKET:-finedesktop}
 conf=${FD_TMUX_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/finedesktop/tmux.conf}
-plain() { exec "${SHELL:-/bin/sh}"; }
+# the shell is the preferred one (ctl prefer shell, bash unless chosen otherwise), then $SHELL, then sh
+sh_cmd=$(finedesktop ctl prefer shell 2>/dev/null)
+case $sh_cmd in ''|error*) sh_cmd=${SHELL:-/bin/sh} ;; esac
+plain() { exec $sh_cmd; }
 
 command -v "$tmux" >/dev/null 2>&1 || plain
 name=${1:-fd-$(date +%s)-$$}
@@ -19,7 +22,7 @@ set -- -L "$sock"
 [ -f "$conf" ] && set -- "$@" -f "$conf"
 unset TMUX
 start=$(date +%s)
-"$tmux" "$@" new-session -A -s "$name"
+"$tmux" "$@" new-session -A -s "$name" "exec $sh_cmd"
 code=$?
 # tmux failed within a moment (bad config, no terminfo): give a shell instead of a closing window
 if [ "$code" -ne 0 ] && [ $(( $(date +%s) - start )) -lt 2 ]; then

@@ -103,6 +103,8 @@ pub struct Desktop {
     pub welcome: crate::components::welcome::Welcome,
     pub capture: crate::components::capture::Capture,
     pub notes: crate::components::notification::notts::Notes,
+    /// the wallpaper `swaybg` was last started for (None: not yet applied)
+    pub wallpaper_shown: Option<String>,
     pub fx: crate::components::fx::Fx,
     /// windows the rules have been applied to
     pub ruled: std::collections::HashSet<u32>,
@@ -213,6 +215,7 @@ impl Desktop {
             welcome: Default::default(),
             capture: Default::default(),
             notes: crate::components::notification::notts::Notes::load(crate::components::notification::notts::state_dir()),
+            wallpaper_shown: None,
             fx: Default::default(),
             ruled: Default::default(),
             pending: Vec::new(),
@@ -779,6 +782,18 @@ impl Desktop {
             if d.config_tap_finger_count() > 0 {
                 let _ = d.config_tap_set_enabled(c.tap_to_click);
             }
+            if d.config_accel_is_available() {
+                let _ = d.config_accel_set_profile(if c.accel_flat { smithay::reexports::input::AccelProfile::Flat } else { smithay::reexports::input::AccelProfile::Adaptive });
+            }
+            if d.config_left_handed_is_available() {
+                let _ = d.config_left_handed_set(c.left_handed);
+            }
+            if d.config_middle_emulation_is_available() {
+                let _ = d.config_middle_emulation_set_enabled(c.middle_emulation);
+            }
+            if d.config_dwt_is_available() {
+                let _ = d.config_dwt_set_enabled(c.disable_while_typing);
+            }
         }
     }
 
@@ -792,6 +807,7 @@ impl Desktop {
             kb.change_repeat_info(cfg.kb_repeat_rate, cfg.kb_repeat_delay);
         }
         self.apply_input();
+        self.wallpaper_apply();
         self.mode = None;
         self.widgets.configure(&self.config);
         self.reload_panels();

@@ -21,6 +21,9 @@ pub enum Id {
     Settings,
     Prefer,
     Notes,
+    Wallpaper,
+    Devices,
+    Drivers,
     Trash,
     System,
     Themes,
@@ -55,6 +58,9 @@ impl Id {
             "session" | "power" => Id::Power,
             "general" | "ogolne" => Id::General,
             "notes" | "notifications" => Id::Notes,
+            "wallpaper" | "tapeta" => Id::Wallpaper,
+            "devices" | "urzadzenia" => Id::Devices,
+            "drivers" | "sterowniki" => Id::Drivers,
             "trash" => Id::Trash,
             "system" => Id::System,
             "prefer" => Id::Prefer,
@@ -81,7 +87,7 @@ impl Id {
         match self {
             Id::Root | Id::Run => None,
             Id::Apps | Id::Games | Id::Scripts | Id::Power | Id::Clip | Id::Calc | Id::Settings => Some(Id::Root),
-            Id::General | Id::Prefer | Id::Notes | Id::Trash | Id::System | Id::Themes | Id::Modes | Id::Layouts | Id::Fonts | Id::Bar | Id::Input | Id::Screens | Id::Audio | Id::Keys | Id::Autostart | Id::Bluetooth => Some(Id::Settings),
+            Id::General | Id::Prefer | Id::Notes | Id::Wallpaper | Id::Devices | Id::Drivers | Id::Trash | Id::System | Id::Themes | Id::Modes | Id::Layouts | Id::Fonts | Id::Bar | Id::Input | Id::Screens | Id::Audio | Id::Keys | Id::Autostart | Id::Bluetooth => Some(Id::Settings),
             Id::ThemeNew | Id::ThemeImport => Some(Id::Themes),
             Id::ColorPick => Some(Id::ThemeNew),
             Id::AllApps => Some(Id::Prefer),
@@ -116,6 +122,9 @@ impl Id {
             Id::Bluetooth => "Bluetooth",
             Id::Input => "Klawiatura i mysz",
             Id::Screens => "Ekrany",
+            Id::Wallpaper => "Tapeta",
+            Id::Devices => "Urzadzenia",
+            Id::Drivers => "Sterowniki",
             Id::ThemeNew => "Utworz motyw",
             Id::ColorPick => "Kolor",
             Id::ThemeImport => "Importuj motyw",
@@ -423,6 +432,9 @@ impl Desktop {
                 e("Bluetooth", Act::Open(Id::Bluetooth)),
                 e("Klawiatura i mysz", Act::Open(Id::Input)),
                 e("Ekrany", Act::Open(Id::Screens)),
+                e("Tapeta", Act::Open(Id::Wallpaper)),
+                e("Urzadzenia: glosniki, mikrofony, kamery, jasnosc", Act::Open(Id::Devices)),
+                e("Sterowniki", Act::Open(Id::Drivers)),
                 e("Aplikacje", Act::Open(Id::Prefer)),
                 e("Powiadomienia", Act::Open(Id::Notes)),
                 e("Kosz", Act::Open(Id::Trash)),
@@ -437,6 +449,9 @@ impl Desktop {
             Id::Bluetooth => bluetooth_entries(),
             Id::Input => self.input_entries(),
             Id::Screens => self.screens_entries(),
+            Id::Wallpaper => self.wallpaper_entries(),
+            Id::Devices => self.devices_entries(),
+            Id::Drivers => self.drivers_entries(),
             Id::ThemeNew => self.theme_new_entries(),
             Id::ColorPick => self.color_pick_entries(),
             Id::ThemeImport => self.theme_import_entries(),
@@ -547,6 +562,9 @@ impl Desktop {
         if key == "notts_dnd" {
             self.notify_dnd(Some(val == "on"));
             return "ok".into();
+        }
+        if key == "brightness" {
+            return self.brightness_set(val);
         }
         if key == "bar_stats" {
             return self.bar_stats_set(val == "on");
@@ -1053,6 +1071,25 @@ impl Desktop {
         }
         if let Act::PickPrefer(role) = entry.act {
             let term = self.config.terminal.clone();
+            if role == "shell" {
+                // shells are not desktop applications: the installed ones from /etc/shells
+                let text = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+                let mut items: Vec<Entry> = text
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| l.starts_with('/') && !l.contains("nologin") && !l.ends_with("/false"))
+                    .map(|p| Entry { label: p.rsplit('/').next().unwrap_or(p).to_string(), act: Act::SetPrefer { role: role.clone(), cmd: p.to_string() } })
+                    .collect();
+                items.dedup_by(|a, b| a.label == b.label);
+                if items.is_empty() {
+                    items.push(e("bash", Act::SetPrefer { role: role.clone(), cmd: "bash".into() }));
+                }
+                let menu = self.menu.as_mut().unwrap();
+                menu.stack.push(Level { id: Id::AllApps, items });
+                menu.query.clear();
+                menu.sel = 0;
+                return "ok".into();
+            }
             let items = apps::scan()
                 .into_iter()
                 .map(|a| Entry { label: a.name.clone(), act: Act::SetPrefer { role: role.clone(), cmd: crate::components::settings::settings_preferaps::command_for(&a, &term) } })
