@@ -59,6 +59,12 @@ impl Layout {
     }
 
     pub fn from_name(s: &str) -> Option<Layout> {
+        // his words: "tiled" means equal cells (grid), "fibonacci" the spiral; the dwm column layout stays `tile`
+        let s = match s {
+            "tiled" => "grid",
+            "fibonacci" => "spiral",
+            other => other,
+        };
         Layout::ALL.into_iter().find(|l| l.name() == s)
     }
 
@@ -285,6 +291,13 @@ mod tests {
         for l in Layout::ALL {
             assert!(arrange(l, A, 0, 0, &p()).slots.is_empty(), "{l:?}");
         }
+    }
+
+    #[test]
+    fn aliases_use_his_words() {
+        assert_eq!(Layout::from_name("tiled"), Some(Layout::Grid));
+        assert_eq!(Layout::from_name("fibonacci"), Some(Layout::Spiral));
+        assert_eq!(Layout::from_name("tile"), Some(Layout::Tile));
     }
 
     #[test]
