@@ -70,6 +70,13 @@ pub(crate) fn mark(on: bool, name: &str) -> String {
     if on { format!("* {name}") } else { format!("  {name}") }
 }
 
+/// A dropdown: one row showing the current value, Enter lists the options. `options` are (label, value) of the config key.
+pub(crate) fn dropdown(label: &str, key: &'static str, options: &[(&str, &str)], cur: &str) -> Entry {
+    let sel = options.iter().position(|(_, v)| *v == cur).unwrap_or(0);
+    let shown = options.get(sel).filter(|(_, v)| *v == cur).map_or_else(|| if cur.is_empty() { "-".to_string() } else { cur.to_string() }, |(l, _)| (*l).to_string());
+    Entry { label: label.into(), act: Act::Choice { cur: shown, sel, options: options.iter().map(|(l, v)| choice(l, key, v, cur)).collect() } }
+}
+
 /// A choice: one value of one config key, starred when it is the current one.
 pub(crate) fn choice(label: &str, key: &'static str, val: &str, cur: &str) -> Entry {
     e(&mark(cur == val, label), Act::Set { key, val: val.into() })
@@ -235,18 +242,10 @@ impl Desktop {
         };
         let slide = |label: &str, key: &'static str, min: f32, max: f32, step: f32, val: f32| e(label, Act::Slide { key, min, max, step, val });
         vec![
-            head("polozenie"),
-            choice("u gory", "bar", "top", bar),
-            choice("na dole", "bar", "bottom", bar),
-            choice("ukryty", "bar", "off", bar),
-            head("zegar"),
-            choice("14:05:09", "clock_format", "%H:%M:%S", &c.clock_format),
-            choice("14:05", "clock_format", "%H:%M", &c.clock_format),
-            choice("2:05 PM", "clock_format", "%I:%M %p", &c.clock_format),
-            head("data"),
-            choice("2026-11-23", "date_format", "%Y-%m-%d", &c.date_format),
-            choice("23.11.2026", "date_format", "%d.%m.%Y", &c.date_format),
-            choice("pon 23 lis", "date_format", "%a %d %b", &c.date_format),
+            head("wyglad"),
+            dropdown("Polozenie", "bar", &[("u gory", "top"), ("na dole", "bottom"), ("ukryty", "off")], bar),
+            dropdown("Zegar", "clock_format", &[("14:05:09", "%H:%M:%S"), ("14:05", "%H:%M"), ("2:05 PM", "%I:%M %p")], &c.clock_format),
+            dropdown("Data", "date_format", &[("2026-11-23", "%Y-%m-%d"), ("23.11.2026", "%d.%m.%Y"), ("pon 23 lis", "%a %d %b")], &c.date_format),
             head("elementy"),
             e("Statystyki: cpu gpu ram vram swap dyski (kolor od 60% i 90%)", Act::Toggle { key: "bar_stats", on: c.bar_right.iter().any(|n| n == "stats") }),
             slide("Wysokosc paska kart (0 = auto)", "tab_height", 0.0, 40.0, 2.0, c.tab_height as f32),
@@ -258,14 +257,14 @@ impl Desktop {
     pub fn input_entries(&self) -> Vec<Entry> {
         let c = &self.config;
         let slide = |label: &str, key: &'static str, min: f32, max: f32, step: f32, val: f32| e(label, Act::Slide { key, min, max, step, val });
-        let mut v = vec![head("uklad klawiatury")];
-        for (label, val) in [("polski", "pl"), ("angielski (US)", "us"), ("angielski (GB)", "gb"), ("niemiecki", "de"), ("polski + US", "pl,us")] {
-            v.push(choice(label, "kb_layout", val, &c.kb_layout));
-        }
-        v.push(head("przelaczanie ukladow i klawisze"));
-        for (label, val) in [("zadne", ""), ("Alt+Shift przelacza uklad", "grp:alt_shift_toggle"), ("Win+Spacja przelacza uklad", "grp:win_space_toggle"), ("Caps Lock przelacza uklad", "grp:caps_toggle"), ("Caps Lock jako Escape", "caps:escape"), ("Caps Lock jako Ctrl", "ctrl:nocaps")] {
-            v.push(choice(label, "kb_options", val, &c.kb_options));
-        }
+        let mut v = vec![head("klawiatura")];
+        v.push(dropdown("Uklad", "kb_layout", &[("polski", "pl"), ("angielski (US)", "us"), ("angielski (GB)", "gb"), ("niemiecki", "de"), ("polski + US", "pl,us")], &c.kb_layout));
+        v.push(dropdown(
+            "Przelaczanie i klawisze",
+            "kb_options",
+            &[("zadne", ""), ("Alt+Shift przelacza uklad", "grp:alt_shift_toggle"), ("Win+Spacja przelacza uklad", "grp:win_space_toggle"), ("Caps Lock przelacza uklad", "grp:caps_toggle"), ("Caps Lock jako Escape", "caps:escape"), ("Caps Lock jako Ctrl", "ctrl:nocaps")],
+            &c.kb_options,
+        ));
         v.push(head("powtarzanie klawiszy"));
         v.push(slide("Szybkosc (znaki na sekunde)", "kb_repeat_rate", 5.0, 60.0, 5.0, c.kb_repeat_rate as f32));
         v.push(slide("Opoznienie (ms)", "kb_repeat_delay", 100.0, 800.0, 50.0, c.kb_repeat_delay as f32));
@@ -275,8 +274,7 @@ impl Desktop {
         v.push(e("Dotkniecie klika (touchpad)", Act::Toggle { key: "tap_to_click", on: c.tap_to_click }));
         v.push(e("Fokus za myszka", Act::Toggle { key: "focus_follows_mouse", on: c.focus_follows_mouse }));
         v.push(head("mysz i touchpad: wiecej"));
-        v.push(choice("Przyspieszenie: adaptacyjne", "accel_profile", "adaptive", if c.accel_flat { "flat" } else { "adaptive" }));
-        v.push(choice("Przyspieszenie: plaskie (bez przyspieszenia, do gier)", "accel_profile", "flat", if c.accel_flat { "flat" } else { "adaptive" }));
+        v.push(dropdown("Przyspieszenie", "accel_profile", &[("adaptacyjne", "adaptive"), ("plaskie (bez przyspieszenia, do gier)", "flat")], if c.accel_flat { "flat" } else { "adaptive" }));
         v.push(e("Mysz dla leworecznych (zamienione przyciski)", Act::Toggle { key: "left_handed", on: c.left_handed }));
         v.push(e("Srodkowy przycisk z dwoch naraz", Act::Toggle { key: "middle_emulation", on: c.middle_emulation }));
         v.push(e("Touchpad: wylacz podczas pisania", Act::Toggle { key: "disable_while_typing", on: c.disable_while_typing }));
@@ -302,19 +300,23 @@ impl Desktop {
             let mut modes: Vec<outputs::ModeInfo> = m.output.modes().iter().map(|m| (m.size.w, m.size.h, m.refresh)).collect();
             modes.sort_by_key(|m| std::cmp::Reverse((m.0 * m.1, m.2)));
             modes.dedup_by_key(|m| (m.0, m.1, (m.2 as f32 / 1000.0).round() as i32));
-            for md in modes.into_iter().take(30) {
-                let on = cur.is_some_and(|c| (c.size.w, c.size.h, c.refresh) == md);
-                let l = outputs::mode_label(md);
-                v.push(e(&mark(on, &l), Act::Out(format!("{name} mode={l}"))));
-            }
+            let labels: Vec<String> = modes.iter().map(|md| outputs::mode_label(*md)).collect();
+            let cur_label = cur.map(|c| outputs::mode_label((c.size.w, c.size.h, c.refresh))).unwrap_or_default();
+            let sel = labels.iter().position(|l| *l == cur_label).unwrap_or(0);
+            let options = labels.iter().take(60).map(|l| e(&mark(*l == cur_label, l), Act::Out(format!("{name} mode={l}")))).collect();
+            v.push(Entry { label: format!("{name}: rozdzielczosc i odswiezanie"), act: Act::Choice { cur: cur_label, sel, options } });
+            let mut places = Vec::new();
             for (oi, (oname, oat, osize)) in geos.iter().enumerate() {
                 if oi == mi {
                     continue;
                 }
                 for (side, label) in [("right", "na prawo od"), ("left", "na lewo od"), ("above", "nad"), ("below", "pod")] {
                     let p = outputs::place(side, *oat, *osize, size);
-                    v.push(e(&format!("Polozenie: {label} {oname}"), Act::Out(format!("{name} pos={},{}", p.0, p.1))));
+                    places.push(e(&format!("{label} {oname}"), Act::Out(format!("{name} pos={},{}", p.0, p.1))));
                 }
+            }
+            if !places.is_empty() {
+                v.push(Entry { label: format!("{name}: polozenie"), act: Act::Choice { cur: format!("{},{}", at.0, at.1), sel: 0, options: places } });
             }
             if geos.len() > 1 {
                 v.push(e(&format!("Wylacz {name}"), Act::Out(format!("{name} off"))));

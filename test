@@ -133,6 +133,8 @@ ctl layout tile >/dev/null; cp "$log/engine.good" "$log/engine.so"
 # the menu, driven like an agent would: open, type, select
 ctl menu open settings | grep -q '^ok' && ok "menu opens" || bad "menu open"
 ctl menu list | head -1 | grep -q '^Menu > Ustawienia$' && ok "menu shows its breadcrumb" || bad "menu breadcrumb"
+ctl menu type Przyspieszenie >/dev/null; ctl menu list | head -1 | grep -q 'Szukaj' && ctl menu list | grep -q 'Przyspieszenie' && ok "typing in settings searches every panel" || bad "settings find"
+ctl menu key esc >/dev/null; ctl menu key esc >/dev/null; ctl menu open settings >/dev/null
 ctl menu type uklad >/dev/null; ctl menu key enter >/dev/null
 ctl menu type mono >/dev/null; ctl menu list | sed -n 2p | grep -q 'monocle' && ok "menu filters" || bad "menu filter"
 ctl menu key enter >/dev/null; sleep 0.3
@@ -141,7 +143,7 @@ ctl menu list 2>&1 | grep -q 'not open' && ok "menu closes after a choice" || ba
 ctl layout tile >/dev/null
 ctl menu open apps >/dev/null; ctl menu key backspace >/dev/null; ctl menu list | head -1 | grep -q '^Menu$' && ok "backspace leaves a level" || bad "backspace level"
 ctl menu key esc >/dev/null; ctl menu list 2>&1 | grep -q 'not open' && ok "esc closes the menu" || bad "esc"
-ctl menu open fonts >/dev/null; ctl menu list | head -1 | grep -q '^Menu > Ustawienia > Czcionki$' && ctl menu list | grep -q 'wbudowana' && ok "fonts panel lists the built-in font" || bad "fonts panel"
+ctl menu open fonts >/dev/null; ctl menu list | head -1 | grep -q '^Menu > Ustawienia > Wyglad > Czcionki$' && ctl menu list | grep -q 'wbudowana' && ok "fonts panel lists the built-in font" || bad "fonts panel"
 ctl menu key esc >/dev/null
 ctl menu open apps >/dev/null; ctl menu list | grep -q 'Terminal\|Flatpak\|Natywne' && ok "apps list has sections" || bad "apps sections"
 ctl menu key esc >/dev/null
@@ -168,6 +170,7 @@ ctl menu open input >/dev/null; ctl menu list | grep -q 'Szybkosc wskaznika' && 
 ctl menu key esc >/dev/null
 ctl menu open screens >/dev/null
 ctl menu open screens >/dev/null; ctl menu list | head -1 | grep -q 'Ekrany' && ok "screens panel opens" || bad "screens panel"
+ctl menu key enter >/dev/null; ctl menu list | head -1 | grep -q 'Wybierz$' && ok "a screen dropdown opens its modes" || bad "screen dropdown"
 ctl menu key enter 2>&1 | grep -q 'saved' || true
 grep -q '^output = winit' "$log/cfg/config" && ok "screen choice is written to the config" || bad "screen persist"
 ctl menu key esc >/dev/null
@@ -215,7 +218,10 @@ for pan in wallpaper devices drivers screens input; do
   ctl menu open $pan >/dev/null; ctl menu list | head -3 | grep -q . && ok "panel $pan opens" || bad "panel $pan"
   ctl menu key esc >/dev/null
 done
-ctl menu open input >/dev/null; ctl menu list | grep -q 'plaskie' && ok "input panel has the acceleration profile" || bad "input accel"
+ctl menu open input >/dev/null; ctl menu list | grep -q 'Przyspieszenie: \[adaptacyjne v\]' && ok "input panel has the acceleration dropdown" || bad "input accel"
+ctl menu type Przyspieszenie >/dev/null; ctl menu key enter >/dev/null; ctl menu list | grep -q 'plaskie' && ok "a dropdown opens its options" || bad "dropdown options"
+ctl menu key down >/dev/null; ctl menu key enter >/dev/null
+grep -q '^accel_profile = flat' "$log/cfg/config" && ok "a dropdown choice is written to the config" || bad "dropdown persist"
 ctl menu key esc >/dev/null
 ctl menu open prefer >/dev/null; ctl menu list | grep -q 'shell: ' && ok "preferred apps has the shell role" || bad "shell role"
 ctl menu key esc >/dev/null

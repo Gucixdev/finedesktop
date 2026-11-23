@@ -40,6 +40,15 @@ pub enum Id {
     ThemeNew,
     ColorPick,
     ThemeImport,
+    /// the settings groups (categories with subcategories)
+    SetLook,
+    SetInput,
+    SetHardware,
+    SetSystem,
+    /// search across every settings panel
+    Find,
+    /// the options of a dropdown
+    Pick,
 }
 
 impl Id {
@@ -78,6 +87,11 @@ impl Id {
             "create_theme" | "theme-new" | "newtheme" => Id::ThemeNew,
             "color" | "colour" => Id::ColorPick,
             "theme-import" | "import_theme" => Id::ThemeImport,
+            "look" | "wyglad" => Id::SetLook,
+            "inputs" | "wejscie" => Id::SetInput,
+            "hardware" | "sprzet" => Id::SetHardware,
+            "sys" | "komputer" => Id::SetSystem,
+            "find" | "search" | "szukaj" => Id::Find,
             _ => return None,
         })
     }
@@ -87,7 +101,12 @@ impl Id {
         match self {
             Id::Root | Id::Run => None,
             Id::Apps | Id::Games | Id::Scripts | Id::Power | Id::Clip | Id::Calc | Id::Settings => Some(Id::Root),
-            Id::General | Id::Prefer | Id::Notes | Id::Wallpaper | Id::Devices | Id::Drivers | Id::Trash | Id::System | Id::Themes | Id::Modes | Id::Layouts | Id::Fonts | Id::Bar | Id::Input | Id::Screens | Id::Audio | Id::Keys | Id::Autostart | Id::Bluetooth => Some(Id::Settings),
+            Id::SetLook | Id::SetInput | Id::SetHardware | Id::SetSystem | Id::Find => Some(Id::Settings),
+            Id::Themes | Id::Modes | Id::Layouts | Id::Fonts | Id::Bar | Id::Wallpaper => Some(Id::SetLook),
+            Id::Input | Id::Keys => Some(Id::SetInput),
+            Id::Screens | Id::Audio | Id::Bluetooth | Id::Devices | Id::Drivers => Some(Id::SetHardware),
+            Id::General | Id::Prefer | Id::Notes | Id::Trash | Id::System | Id::Autostart => Some(Id::SetSystem),
+            Id::Pick => None,
             Id::ThemeNew | Id::ThemeImport => Some(Id::Themes),
             Id::ColorPick => Some(Id::ThemeNew),
             Id::AllApps => Some(Id::Prefer),
@@ -109,7 +128,7 @@ impl Id {
             Id::General => "Ogolne",
             Id::Notes => "Powiadomienia",
             Id::Trash => "Kosz",
-            Id::System => "System",
+            Id::System => "Config i silniki",
             Id::Prefer => "Preferowane aplikacje",
             Id::Themes => "Motyw",
             Id::Modes => "Tryb",
@@ -128,6 +147,12 @@ impl Id {
             Id::ThemeNew => "Utworz motyw",
             Id::ColorPick => "Kolor",
             Id::ThemeImport => "Importuj motyw",
+            Id::SetLook => "Wyglad",
+            Id::SetInput => "Wejscie",
+            Id::SetHardware => "Sprzet",
+            Id::SetSystem => "System",
+            Id::Find => "Szukaj",
+            Id::Pick => "Wybierz",
         }
     }
 }
@@ -171,6 +196,8 @@ pub enum Act {
     SetPrefer { role: String, cmd: String },
     /// a checkbox: flips the config key `key` (written to the user config)
     Toggle { key: &'static str, on: bool },
+    /// a dropdown: the current value is shown on the row, Enter opens the options (`sel` is the current one)
+    Choice { cur: String, sel: usize, options: Vec<Entry> },
     /// a slider: moves the config key `key` by `step` inside min..=max
     Slide { key: &'static str, min: f32, max: f32, step: f32, val: f32 },
     Reload,
@@ -217,6 +244,8 @@ pub enum Row {
     Slider(String, f32, String),
     /// label and a colour swatch
     Color(String, [u8; 3]),
+    /// label and the current value of a dropdown
+    Choice(String, String),
 }
 
 #[derive(Debug, Default)]
@@ -240,6 +269,7 @@ impl Entry {
                 Row::Slider(self.label.clone(), (val / max.max(f32::EPSILON)).clamp(0.0, 1.0), text)
             }
             Act::Color { rgb, .. } | Act::Swatch(rgb) | Act::SetColor(rgb) => Row::Color(self.label.clone(), *rgb),
+            Act::Choice { cur, .. } => Row::Choice(self.label.clone(), cur.clone()),
             _ => Row::Item(self.label.clone()),
         }
     }
@@ -257,6 +287,17 @@ pub(super) fn e(label: &str, act: Act) -> Entry {
 pub(super) fn head(label: &str) -> Entry {
     Entry { label: label.into(), act: Act::Head }
 }
+
+/// The entries of a settings group: one Open per subcategory.
+fn group(items: &[(&str, Id)]) -> Vec<Entry> {
+    items.iter().map(|(l, id)| e(l, Act::Open(*id))).collect()
+}
+
+/// The leaf panels that the settings search reads, in the order of the groups. Not in it: the shortcut editor (it is
+/// its own search), the trash and Bluetooth (they list things, not settings).
+const FIND_PANELS: [Id; 15] = [
+    Id::Themes, Id::Modes, Id::Layouts, Id::Fonts, Id::Bar, Id::Wallpaper, Id::Input, Id::Screens, Id::Audio, Id::Devices, Id::Drivers, Id::General, Id::Autostart, Id::Prefer, Id::Notes,
+];
 
 /// Every wanted app in ONE list, under a title per kind that has any entries.
 fn grouped(kinds: &[(&str, fn(&apps::App) -> bool)]) -> Vec<Entry> {
@@ -420,26 +461,17 @@ impl Desktop {
             Id::Calc => vec![e("wpisz wyrazenie, Enter kopiuje wynik", Act::Nop)],
             // the tabs of the settings panel, drawn down the left side
             Id::Settings => vec![
-                e("Ogolne", Act::Open(Id::General)),
-                e("Motyw", Act::Open(Id::Themes)),
-                e("Tryb", Act::Open(Id::Modes)),
-                e("Uklad okien", Act::Open(Id::Layouts)),
-                e("Czcionki", Act::Open(Id::Fonts)),
-                e("Pasek", Act::Open(Id::Bar)),
-                e("Dzwiek", Act::Open(Id::Audio)),
-                e("Skroty", Act::Open(Id::Keys)),
-                e("Autostart", Act::Open(Id::Autostart)),
-                e("Bluetooth", Act::Open(Id::Bluetooth)),
-                e("Klawiatura i mysz", Act::Open(Id::Input)),
-                e("Ekrany", Act::Open(Id::Screens)),
-                e("Tapeta", Act::Open(Id::Wallpaper)),
-                e("Urzadzenia: glosniki, mikrofony, kamery, jasnosc", Act::Open(Id::Devices)),
-                e("Sterowniki", Act::Open(Id::Drivers)),
-                e("Aplikacje", Act::Open(Id::Prefer)),
-                e("Powiadomienia", Act::Open(Id::Notes)),
-                e("Kosz", Act::Open(Id::Trash)),
-                e("System", Act::Open(Id::System)),
+                e("Wyglad", Act::Open(Id::SetLook)),
+                e("Wejscie", Act::Open(Id::SetInput)),
+                e("Sprzet", Act::Open(Id::SetHardware)),
+                e("System", Act::Open(Id::SetSystem)),
             ],
+            Id::SetLook => group(&[("Motyw", Id::Themes), ("Tryb", Id::Modes), ("Uklad okien", Id::Layouts), ("Czcionki", Id::Fonts), ("Pasek", Id::Bar), ("Tapeta", Id::Wallpaper)]),
+            Id::SetInput => group(&[("Klawiatura i mysz", Id::Input), ("Skroty", Id::Keys)]),
+            Id::SetHardware => group(&[("Ekrany", Id::Screens), ("Dzwiek", Id::Audio), ("Bluetooth", Id::Bluetooth), ("Urzadzenia: glosniki, mikrofony, kamery, jasnosc", Id::Devices), ("Sterowniki", Id::Drivers)]),
+            Id::SetSystem => group(&[("Ogolne", Id::General), ("Autostart", Id::Autostart), ("Aplikacje", Id::Prefer), ("Powiadomienia", Id::Notes), ("Kosz", Id::Trash), ("Config i silniki", Id::System)]),
+            Id::Find => self.find_entries(),
+            Id::Pick => self.menu.as_ref().and_then(|m| m.stack.iter().rev().find(|l| l.id == Id::Pick).map(|l| l.items.clone())).unwrap_or_default(),
             Id::General => self.general_entries(),
             Id::Fonts => self.font_entries(),
             Id::Bar => self.bar_entries(),
@@ -585,8 +617,24 @@ impl Desktop {
     }
 
     /// Redraw the open level from the current config (a checkbox or slider just changed), cursor where it was.
+    /// The settings search: the entries of every panel in FIND_PANELS under a title per panel, the panel itself first so
+    /// that its name finds it. Each entry acts exactly as in its own panel.
+    pub(crate) fn find_entries(&self) -> Vec<Entry> {
+        let mut v = Vec::new();
+        for id in FIND_PANELS {
+            let items = self.menu_level(id).items;
+            v.push(head(id.title()));
+            v.push(e(&format!("otworz: {}", id.title()), Act::Open(id)));
+            v.extend(items.into_iter().filter(|i| !matches!(i.act, Act::Head | Act::Nop)));
+        }
+        v
+    }
+
     fn menu_refresh(&mut self) {
         let Some(id) = self.menu.as_ref().map(|m| m.level().id) else { return };
+        if id == Id::Pick {
+            return; // the options were made when the dropdown opened
+        }
         let level = self.menu_level(id);
         if let Some(l) = self.menu.as_mut().and_then(|m| m.stack.last_mut()) {
             *l = level;
@@ -676,13 +724,17 @@ impl Menu {
         let q = self.query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         let mut group = 0usize;
+        let mut head = String::new();
+        let find = self.level().id == Id::Find;
         let mut v: Vec<(usize, bool, usize)> = Vec::new();
         for (i, it) in items.iter().enumerate() {
             if matches!(it.act, Act::Head) {
                 group += 1;
+                head = it.label.to_lowercase();
                 continue;
             }
-            let l = it.label.to_lowercase();
+            // in the settings search the name of the panel counts too: "tapeta" finds everything under Tapeta
+            let l = if find { format!("{head} {}", it.label.to_lowercase()) } else { it.label.to_lowercase() };
             if words.iter().all(|w| l.contains(w)) {
                 v.push((group, !words.first().is_some_and(|f| l.starts_with(f)), i));
             }
@@ -853,6 +905,13 @@ impl Desktop {
                 m.stack.push(level);
             }
         }
+        // typing in the settings tabs or in a group searches every panel: the search level opens above it
+        if verb == "type" && self.menu.as_ref().is_some_and(|m| matches!(m.level().id, Id::Settings | Id::SetLook | Id::SetInput | Id::SetHardware | Id::SetSystem)) {
+            let level = self.menu_level(Id::Find);
+            if let Some(m) = self.menu.as_mut() {
+                m.stack.push(level);
+            }
+        }
         // space flips a checkbox when the cursor is on one; left / right move a slider
         if (verb == "key" && rest == "space") || (verb == "space") {
             if self.menu_control(0) {
@@ -878,6 +937,7 @@ impl Desktop {
                         Row::Check(l, on) => format!("{}[{}] {l}", if n == sel { "> " } else { "  " }, if *on { "x" } else { " " }),
                         Row::Slider(l, _, v) => format!("{}{l}: {v}", if n == sel { "> " } else { "  " }),
                         Row::Color(l, c) => format!("{}{l} {}", if n == sel { "> " } else { "  " }, crate::components::theme::hex(*c)),
+                        Row::Choice(l, v) => format!("{}{l}: [{v} v]", if n == sel { "> " } else { "  " }),
                     }))
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -909,7 +969,7 @@ impl Desktop {
                         let gone = menu.stack.pop().map(|l| l.id);
                         // back on the tabs of the settings panel: the cursor stays on the tab we came from
                         menu.sel = match (menu.level().id, gone) {
-                            (Id::Settings, Some(g)) => menu.level().items.iter().position(|i| matches!(i.act, Act::Open(id) if id == g)).unwrap_or(0),
+                            (Id::Settings | Id::SetLook | Id::SetInput | Id::SetHardware | Id::SetSystem, Some(g)) => menu.level().items.iter().position(|i| matches!(i.act, Act::Open(id) if id == g)).unwrap_or(0),
                             _ => 0,
                         };
                     }
@@ -919,7 +979,7 @@ impl Desktop {
                     if menu.query.pop().is_some() {
                         menu.sel = 0;
                         // the search opened from the root: erasing it all goes back to the root list
-                        if menu.query.is_empty() && menu.level().id == Id::Run && menu.stack.len() > 1 {
+                        if menu.query.is_empty() && matches!(menu.level().id, Id::Run | Id::Find) && menu.stack.len() > 1 {
                             menu.stack.pop();
                         }
                         self.menu_recalc();
@@ -961,7 +1021,23 @@ impl Desktop {
         menu.sel = 0;
     }
 
+    /// Enter on the selected row. A choice made in a dropdown closes the dropdown and shows the panel under it again.
     fn menu_enter(&mut self) -> String {
+        let in_pick = self.menu.as_ref().is_some_and(|m| m.level().id == Id::Pick);
+        let r = self.menu_enter_row();
+        if in_pick {
+            if let Some(m) = self.menu.as_mut() {
+                if m.level().id == Id::Pick && m.stack.len() > 1 && !r.starts_with("error") {
+                    m.stack.pop();
+                    m.sel = 0;
+                }
+            }
+            self.menu_refresh();
+        }
+        r
+    }
+
+    fn menu_enter_row(&mut self) -> String {
         let Some(menu) = self.menu.as_ref() else { return "error: menu is not open".into() };
         let vis = menu.visible();
         let Some(&i) = vis.get(menu.sel.min(vis.len().saturating_sub(1))) else {
@@ -975,6 +1051,13 @@ impl Desktop {
             return "error: nothing to select".into();
         };
         let entry = menu.level().items[i].clone();
+        if let Act::Choice { sel, options, .. } = &entry.act {
+            let menu = self.menu.as_mut().unwrap();
+            menu.stack.push(Level { id: Id::Pick, items: options.clone() });
+            menu.query.clear();
+            menu.sel = *sel;
+            return "ok".into();
+        }
         if let Act::Open(id) = entry.act {
             if id == Id::Notes {
                 self.notes.mark_seen();
@@ -1155,7 +1238,7 @@ impl Desktop {
                 crate::keys::spawn(&format!("{term} -e sh -c '${{EDITOR:-frost}} \"{path}\"'"));
                 "ok".into()
             }
-            Act::AutoToggle { .. } | Act::AddBind(_) | Act::DelBind(_) | Act::Set { .. } | Act::Color { .. } | Act::Swatch(_) | Act::SetColor(_) | Act::Hsv { .. } | Act::SaveTheme(_) | Act::ImportTheme(_) | Act::Out(_) | Act::Font(_) | Act::CtlStay(_) | Act::Open(_) | Act::PickPrefer(_) | Act::Toggle { .. } | Act::Slide { .. } | Act::Nop | Act::Head => "ok".into(),
+            Act::AutoToggle { .. } | Act::AddBind(_) | Act::DelBind(_) | Act::Set { .. } | Act::Color { .. } | Act::Swatch(_) | Act::SetColor(_) | Act::Hsv { .. } | Act::SaveTheme(_) | Act::ImportTheme(_) | Act::Out(_) | Act::Font(_) | Act::CtlStay(_) | Act::Open(_) | Act::PickPrefer(_) | Act::Toggle { .. } | Act::Slide { .. } | Act::Choice { .. } | Act::Nop | Act::Head => "ok".into(),
         }
     }
 }
@@ -1181,7 +1264,21 @@ mod tests {
     #[test]
     fn opening_a_deep_level_opens_the_path_to_it() {
         let path = crate::flows::hfsm::path_of(Id::Themes, Id::parent);
-        assert_eq!(path, [Id::Root, Id::Settings, Id::Themes]);
+        assert_eq!(path, [Id::Root, Id::Settings, Id::SetLook, Id::Themes]);
+    }
+
+    #[test]
+    fn a_choice_row_shows_the_current_value() {
+        let c = Entry { label: "Uklad".into(), act: Act::Choice { cur: "grid".into(), sel: 0, options: vec![e("grid", Act::Nop)] } };
+        assert_eq!(c.row(), Row::Choice("Uklad".into(), "grid".into()));
+    }
+
+    #[test]
+    fn every_searched_panel_sits_under_a_settings_group() {
+        for id in FIND_PANELS {
+            let path = crate::flows::hfsm::path_of(id, Id::parent);
+            assert!(path.len() >= 4 && path[1] == Id::Settings, "{id:?} is not under a settings group: {path:?}");
+        }
     }
 
     #[test]

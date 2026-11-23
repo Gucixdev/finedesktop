@@ -480,6 +480,21 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                                 cv.rect(sx, y + (lh - sh) / 2, sw, sh, *c);
                                 cv.text(sx + sw + pad, y, &super::theme::hex(*c), fg, ms, w);
                             }
+                            super::menu::Row::Choice(label, value) => {
+                                if n == sel {
+                                    cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
+                                }
+                                let fg = if n == sel { th.sel_fg } else { th.fg };
+                                let bx = x0 + if tabs.is_some() { 0 } else { pad };
+                                // the closed dropdown: a box with the current value and an arrow, on the right half
+                                let bw = (w - bx - pad) * 9 / 20;
+                                let box_x = w - pad - bw;
+                                cv.text(bx, y, label, fg, ms, box_x - bx - pad);
+                                cv.rect(box_x, y + 1, bw, lh - 2, fg);
+                                cv.rect(box_x + 1, y + 2, bw - 2, lh - 4, if n == sel { th.sel_bg } else { th.bg });
+                                cv.text(box_x + pad, y, value, fg, ms, box_x + bw - lh);
+                                cv.text(box_x + bw - lh + pad, y, "v", if n == sel { th.sel_fg } else { th.accent }, ms, box_x + bw);
+                            }
                             super::menu::Row::Item(s) => {
                                 if n == sel {
                                     cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
