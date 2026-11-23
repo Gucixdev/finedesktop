@@ -450,10 +450,14 @@ impl Desktop {
         for (app, count, last) in n.apps() {
             let muted = n.muted.contains(&app);
             v.push(head(&format!("{app}  ({count}, ostatnie {last}){}", if muted { "  [wyciszona]" } else { "" })));
+            // the app's icon (its desktop file's Icon= found by the app name), when it has a PNG: before each of its notes
+            let icon = crate::components::apps::icon_for(&app).filter(|i| crate::components::icons::find(i).is_some());
             for note in n.list.iter().rev().filter(|x| x.app == app).take(4) {
                 let tag = if note.tag.is_empty() { String::new() } else { format!("[{}] ", note.tag) };
                 let quiet = if note.quiet { "(cicho) " } else { "" };
-                v.push(e(&format!("  {}  {quiet}{tag}{}", note.stamp, note.text), Act::Nop));
+                let mut line = e(&format!("  {}  {quiet}{tag}{}", note.stamp, note.text), Act::Nop);
+                line.icon = icon.clone();
+                v.push(line);
                 for (key, label) in &note.actions {
                     v.push(stay(&format!("      > {label}"), format!("notify invoke {} {key}", note.id)));
                 }

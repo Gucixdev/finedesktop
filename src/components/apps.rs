@@ -78,6 +78,21 @@ fn parse(text: &str, flatpak: bool, id: &str) -> Option<App> {
     Some(App { id: id.to_string(), name: name?, exec: exec.filter(|e| !e.is_empty())?, terminal, flatpak, game: cats.split(';').any(|c| c == "Game"), icon })
 }
 
+/// The icon of the application a notification came from: its name (`firefox`, `Discord`) against the app's name, then the
+/// last part of its desktop id (`org.mozilla.firefox`); the icon name or path as the desktop file gives it.
+pub fn icon_for(app: &str) -> Option<String> {
+    let want = app.trim().to_lowercase();
+    if want.is_empty() {
+        return None;
+    }
+    let all = scan();
+    all.iter()
+        .find(|a| a.name.to_lowercase() == want)
+        .or_else(|| all.iter().find(|a| a.id.trim_end_matches(".desktop").rsplit('.').next().is_some_and(|l| l.to_lowercase() == want)))
+        .map(|a| a.icon.clone())
+        .filter(|i| !i.is_empty())
+}
+
 /// Every application once (the first directory wins), sorted by name.
 pub fn scan() -> Vec<App> {
     let mut v: Vec<App> = Vec::new();
@@ -109,6 +124,7 @@ mod tests {
 
     #[test]
     fn hidden_and_nameless_entries_are_skipped() {
+        assert_eq!(parse("[Desktop Entry]\nType=Application\nName=A\nExec=a\nIcon=org.a.A\n[Desktop Action x]\nIcon=other\n", false, "a.desktop").unwrap().icon, "org.a.A");
         assert!(parse("[Desktop Entry]\nType=Application\nName=A\nExec=a\nNoDisplay=true\n", false, "a.desktop").is_none());
         assert!(parse("[Desktop Entry]\nType=Application\nExec=a\n", false, "a.desktop").is_none());
     }
