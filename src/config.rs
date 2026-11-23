@@ -54,6 +54,7 @@ pub enum Action {
     Menu(String),
     /// `ctl prefer [ROLE [COMMAND]]`
     Prefer(String),
+    Wallpaper(String),
     Focus(Dir),
     /// `focus left|right|up|down`: the window in that direction, or the monitor beyond it
     FocusDir(crate::components::engine::focus_engine::Cardinal),
@@ -188,6 +189,10 @@ pub struct Config {
     pub disable_while_typing: bool,
     /// picture shown by `swaybg` behind the windows (empty: the theme's background colour)
     pub wallpaper: String,
+    /// `wallpaper_mode = fill|fit|stretch|center|tile`
+    pub wallpaper_mode: crate::components::ast::Mode,
+    /// `wallpaper_OUTPUT = PATH`: pictures that replace the default one on one output
+    pub wallpaper_outputs: Vec<(String, String)>,
     /// `font = PATH`: a .bdf or .psf bitmap font; empty or unreadable = the built-in Terminus 8x16
     pub font: String,
     /// height of the tab/stack bar in px; 0 = one text row plus 2 (slimmer than the status bar)
@@ -258,6 +263,8 @@ impl Default for Config {
             middle_emulation: false,
             disable_while_typing: true,
             wallpaper: String::new(),
+            wallpaper_mode: crate::components::ast::Mode::Fill,
+            wallpaper_outputs: Vec::new(),
             font: String::new(),
             tab_height: 0,
             widgets: true,
@@ -313,6 +320,7 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "reload-engine" => Action::ReloadEngine,
         "layouts" => Action::Layouts,
         "prefer" => Action::Prefer(rest.into()),
+        "wallpaper" => Action::Wallpaper(rest.into()),
         "menu" => Action::Menu(if rest.is_empty() { "toggle".into() } else { rest.into() }),
         "state" => Action::State(rest == "json"),
         "session" => Action::Session(rest.into()),
@@ -456,6 +464,14 @@ impl Config {
             "middle_emulation" => self.middle_emulation = matches!(val, "on" | "true" | "yes" | "1"),
             "disable_while_typing" => self.disable_while_typing = matches!(val, "on" | "true" | "yes" | "1"),
             "wallpaper" => self.wallpaper = expand_home(val),
+            "wallpaper_mode" => self.wallpaper_mode = crate::components::ast::Mode::parse(val)?,
+            k if k.starts_with("wallpaper_") => {
+                let out = &k["wallpaper_".len()..];
+                self.wallpaper_outputs.retain(|(o, _)| o != out);
+                if !val.is_empty() {
+                    self.wallpaper_outputs.push((out.to_string(), expand_home(val)));
+                }
+            }
             "anim_speed" => self.anim_speed = f(val)?.clamp(0.25, 4.0),
             "anim_bounce" => self.anim_bounce = f(val)?.clamp(0.0, 1.0),
             "tab_height" => self.tab_height = n(val)?.clamp(0, 200),
@@ -641,6 +657,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn wallpaper_keys_parse_per_output_and_an_empty_value_removes_it() {
+        let mut c = Config::default();
+        assert!(c.apply("wallpaper = /a.png\nwallpaper_mode = tile\nwallpaper_DP-1 = /b.png\nwallpaper_HDMI-A-1 = /c.png\nwallpaper_DP-1 =").is_empty());
+        assert_eq!(c.wallpaper_mode, crate::components::ast::Mode::Tile);
+        assert_eq!(c.wallpaper_outputs, [("HDMI-A-1".to_string(), "/c.png".to_string())]);
+        assert!(!c.apply("wallpaper_mode = zoom").is_empty());
+    }
 
     #[test]
     fn steamdeck_preset_parses_and_sets_the_list_layout() {

@@ -31,4 +31,6 @@ pub mod power;
 pub mod crash;
 pub mod window;
 pub mod autostart;
+pub mod ast;
+pub mod api;
 pub mod restore;

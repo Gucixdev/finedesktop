@@ -197,6 +197,17 @@ ctl menu key space >/dev/null; [ ! -x "$log/cfg/autostart/e2e" ] && ok "space tu
 ctl menu key esc >/dev/null
 out=$(ctl menu open bluetooth 2>&1; ctl menu list 2>&1); echo "$out" | grep -qE "Blueman|Urzadzenia" && ok "bluetooth panel lists blueman or says it is missing" || { echo "$out" >&2; bad "bluetooth panel"; }
 ctl menu key esc >/dev/null
+# wallpaper api: show, set, per output, mode, clear, and refusals that change nothing
+ctl wallpaper | grep -q '^\* none (fill)' && ok "wallpaper starts empty" || bad "wallpaper show"
+ctl wallpaper bogus | grep -q '^error: unknown wallpaper command' && ok "wallpaper rejects an unknown word" || bad "wallpaper bogus"
+ctl wallpaper set pic.png | grep -q 'relative' && ok "wallpaper refuses a relative path" || bad "wallpaper relative"
+ctl wallpaper set /nope.png | grep -q 'not a file' && ok "wallpaper refuses a missing file" || bad "wallpaper missing"
+printf 'x' > "$log/wp.png"
+ctl wallpaper set "$log/wp.png" | grep -q '^ok' && ctl wallpaper | grep -q "^\* $log/wp.png (fill)" && grep -q "^wallpaper = $log/wp.png" "$log/cfg/config" && ok "wallpaper set is shown and saved" || bad "wallpaper set"
+ctl wallpaper mode tile | grep -q '^ok' && ctl wallpaper | grep -q '(tile)' && ok "wallpaper mode changes" || bad "wallpaper mode"
+ctl wallpaper set -o NOPE "$log/wp.png" | grep -q 'no output' && ok "wallpaper per-output needs a real output" || bad "wallpaper output"
+ctl wallpaper set -o winit "$log/wp.png" | grep -q '^ok' && ctl wallpaper | grep -q "^winit $log/wp.png" && ok "wallpaper per output" || bad "wallpaper per output"
+ctl wallpaper clear winit >/dev/null; ctl wallpaper clear >/dev/null; ctl wallpaper | grep -q '^\* none' && ! ctl wallpaper | grep -q '^winit' && ok "wallpaper clear" || bad "wallpaper clear"
 # notification center: groups by app, do-not-disturb, snooze, mute, per-app log, the panel
 ctl notify send -a discord -t im.received "ping from discord" | grep -q '^ok' && ok "notify send posts under an app" || bad "notify send"
 ctl notify apps | grep -qP '^discord\t1\t' && ok "notify apps groups by app" || bad "notify apps"

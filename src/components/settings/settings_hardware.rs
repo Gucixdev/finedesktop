@@ -4,7 +4,7 @@
 
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
 };
 
@@ -196,6 +196,7 @@ impl Desktop {
     pub fn wallpaper_entries(&self) -> Vec<Entry> {
         let cur = &self.config.wallpaper;
         let mut v = vec![if has("swaybg") { head("tapeta: wybor zapisuje sie w config (wallpaper = SCIEZKA)") } else { head("tapeta wymaga programu swaybg (xbps-install swaybg / pacman -S swaybg)") }];
+        v.push(super::super::panels::dropdown("Dopasowanie", "wallpaper_mode", &[("wypelnij (przytnij)", "fill"), ("dopasuj (z ramkami)", "fit"), ("rozciagnij", "stretch"), ("do srodka", "center"), ("kafelki", "tile")], self.config.wallpaper_mode.name()));
         v.push(choice("Brak (kolor tla motywu)", "wallpaper", "", cur));
         let list = wallpapers();
         if list.is_empty() {
@@ -207,23 +208,6 @@ impl Desktop {
             v.push(choice(&label, "wallpaper", &s, cur));
         }
         v
-    }
-
-    /// Start `swaybg` for the configured picture (and stop the old one), only when it changed.
-    pub fn wallpaper_apply(&mut self) {
-        if self.wallpaper_shown.as_deref() == Some(self.config.wallpaper.as_str()) {
-            return;
-        }
-        self.wallpaper_shown = Some(self.config.wallpaper.clone());
-        let p = self.config.wallpaper.clone();
-        let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
-        if p.is_empty() {
-            crate::keys::spawn("pkill -x swaybg");
-        } else if Path::new(&p).is_file() {
-            crate::keys::spawn(&format!("pkill -x swaybg; exec swaybg -i {} -m fill", q(&p)));
-        } else {
-            tracing::warn!("wallpaper {p:?} is not a file");
-        }
     }
 
     /// Urzadzenia: speakers, microphones (choose the default), cameras (live preview), brightness.
