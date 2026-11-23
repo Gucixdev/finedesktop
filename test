@@ -267,6 +267,15 @@ ctl menu list | grep -n '^> ' | grep -q 'Aplikacje' && ok "launcher cursor start
 ctl menu list | sed -n 2,12p | tr '\n' ' ' | grep -q 'Aplikacje.*Schowek.*Kalkulator.*Zasilanie.*Ustawienia' && ok "launcher root list" || bad "launcher root list"
 ctl menu type sh >/dev/null; ctl menu list | head -1 | grep -q 'Uruchom' && ok "typing on the root searches" || bad "root search"
 ctl menu key backspace >/dev/null; ctl menu key backspace >/dev/null; ctl menu type Przyspieszenie >/dev/null; ctl menu list | grep -q 'Przyspieszenie' && ok "the launcher search finds a setting" || bad "launcher finds settings"
+# files: a file made under HOME is found by name, in a "Pliki" section, once 3+ characters are typed
+if command -v fd >/dev/null; then
+  fdfile="fdtest-$$-uniq.txt"; touch "$HOME/$fdfile"
+  ctl menu key left >/dev/null
+  ctl menu type "fdtest-$$-uniq" >/dev/null
+  ctl menu list | grep -q "~/$fdfile" && ctl menu list | grep -q '^-- Pliki' && ok "the launcher search finds a file" || { bad "launcher finds files"; ctl menu list | head -8; }
+  rm -f "$HOME/$fdfile"
+  ctl menu key left >/dev/null; ctl menu type Przyspieszenie >/dev/null
+fi
 ctl menu key esc >/dev/null; ctl menu launch >/dev/null; ctl menu type sh >/dev/null
 ctl menu key backspace >/dev/null; ctl menu key backspace >/dev/null; ctl menu list | head -1 | grep -q '^Menu$' && ok "erasing the search returns to the root" || bad "search back"
 ctl menu key esc >/dev/null

@@ -1026,6 +1026,18 @@ impl Desktop {
         }
         let Some(menu) = self.menu.as_mut() else { return };
         let level = menu.stack.last_mut().expect("a menu always has a level");
+        if level.id == Id::Run {
+            // the launcher searches files too: the "Pliki" section at the end follows what is typed (plocate, instant)
+            let hits = file_hits(menu.query.trim());
+            if let Some(at) = level.items.iter().position(|it| matches!(it.act, Act::Head) && it.label == "Pliki") {
+                level.items.truncate(at);
+            }
+            if !hits.is_empty() {
+                level.items.push(head("Pliki"));
+                level.items.extend(hits);
+            }
+            return;
+        }
         if level.id != Id::Calc {
             return;
         }
@@ -1262,9 +1274,46 @@ impl Desktop {
     }
 }
 
+/// Files under $HOME whose name contains `q` (3+ characters), found by `fd` (hidden files and .gitignore'd build output
+/// skipped, links followed, depth 6, 0.3 s at most): an `xdg-open` entry each, at most 15. No fd: nothing.
+fn file_hits(q: &str) -> Vec<Entry> {
+    if q.chars().count() < 3 || q.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    let Some(home) = std::env::var_os("HOME").map(|h| h.to_string_lossy().into_owned()) else { return Vec::new() };
+    let Ok(out) = std::process::Command::new("timeout")
+        .args(["0.3", "fd", "-L", "-d", "6", "-t", "f", "-a", "--max-results", "60", "-F", "-i", "--", q, &home])
+        .stderr(std::process::Stdio::null())
+        .output()
+    else {
+        return Vec::new();
+    };
+    file_entries(&String::from_utf8_lossy(&out.stdout), &home)
+}
+
+fn file_entries(list: &str, home: &str) -> Vec<Entry> {
+    let prefix = format!("{home}/");
+    list.lines()
+        .filter_map(|p| p.strip_prefix(&prefix).map(|rel| (p, rel)))
+        .filter(|(_, rel)| !rel.split('/').any(|c| c.starts_with('.') || matches!(c, "target" | "node_modules" | "graphify-out" | "__pycache__")))
+        .take(15)
+        .map(|(p, rel)| Entry { label: format!("~/{rel}"), act: Act::Run { cmd: format!("xdg-open '{}'", p.replace('\'', "'\\''")), terminal: false } })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_entries_keep_home_files_and_drop_hidden_and_build_output() {
+        let list = "/home/u/a/notes.txt\n/home/u/.cache/x/notes.txt\n/home/u/p/target/notes.o\n/etc/notes\n/home/u/it's.txt\n";
+        let v = file_entries(list, "/home/u");
+        let labels: Vec<&str> = v.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["~/a/notes.txt", "~/it's.txt"]);
+        assert!(matches!(&v[1].act, Act::Run { cmd, .. } if cmd == "xdg-open '/home/u/it'\\''s.txt'"));
+        assert!(file_hits("ab").is_empty());
+    }
 
     #[test]
     fn held_keys_speed_up() {
