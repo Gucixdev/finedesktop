@@ -82,7 +82,7 @@ A theme is a separate setting from a mode: a theme is how it looks, a mode is ho
 
 `Mod+Shift+W` opens the menu: Aplikacje (ONE list with sections Flatpak / Natywne / Gry), Schowek, Skrypty
 (executables in `<config dir>/scripts/`), Kalkulator, Ustawienia. Type filters, Left goes back (clears the query first), Right/Enter goes in.
-`ctl menu launch` (Mod+W) is the launcher: the root list (Aplikacje, Schowek, Kalkulator, Zasilanie, Ustawienia; Ustawienia is a panel with checkboxes and sliders), and typing there searches every app and command, which include `power: lock|logout|suspend|hibernate|reboot|poweroff` (`ctl session`) and `backup: NAME` for every executable in `<config dir>/backup/` (one script per backup job). `ctl log [N]` prints the last N log lines (also kept in
+`ctl menu launch` (Mod+W) is the launcher: the root list (Aplikacje, Schowek, Kalkulator, Zasilanie, Ustawienia; Ustawienia is a panel with checkboxes and sliders), and typing there searches every app and command, which include `power: lock|logout|suspend|hibernate|reboot|poweroff` (`ctl session`) and `backup: NAME` for every executable in `<config dir>/backup/` (one script per backup job). The same search also finds settings (a title "Ustawienia": every option of the cheap panels, `otworz: Dzwiek|Urzadzenia|Sterowniki` for the ones that need lspci or wpctl). `ctl log [N]` prints the last N log lines (also kept in
 `~/.local/state/finedesktop/log`); every action, from a key, `ctl` or a hook, is logged as `action: ...`.
 
 ## Tab and stack labels

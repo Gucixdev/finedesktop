@@ -458,6 +458,13 @@ impl Desktop {
                 v.extend(POWER.iter().map(|s| e(&format!("power: {s}"), Act::Ctl(format!("session {s}")))));
                 v.push(head("Backup"));
                 v.extend(backup_entries());
+                // the launcher opens at once: panels that run lspci / wpctl to be built stay out, their `otworz:` row is enough
+                v.push(head("Ustawienia"));
+                let quick: Vec<Id> = FIND_PANELS.iter().copied().filter(|p| !matches!(p, Id::Devices | Id::Drivers | Id::Audio)).collect();
+                v.extend(self.find_in(&quick));
+                for id in [Id::Audio, Id::Devices, Id::Drivers] {
+                    v.push(e(&format!("otworz: {}", id.title()), Act::Open(id)));
+                }
                 v.push(head("Polecenia"));
                 v.extend(super::launcher::commands().into_iter().map(|c| Entry { label: c.clone(), act: Act::Run { cmd: c, terminal: false } }));
                 v
@@ -628,8 +635,12 @@ impl Desktop {
     /// The settings search: the entries of every panel in FIND_PANELS under a title per panel, the panel itself first so
     /// that its name finds it. Each entry acts exactly as in its own panel.
     pub(crate) fn find_entries(&self) -> Vec<Entry> {
+        self.find_in(&FIND_PANELS)
+    }
+
+    fn find_in(&self, panels: &[Id]) -> Vec<Entry> {
         let mut v = Vec::new();
-        for id in FIND_PANELS {
+        for &id in panels {
             let items = self.menu_level(id).items;
             v.push(head(id.title()));
             v.push(e(&format!("otworz: {}", id.title()), Act::Open(id)));

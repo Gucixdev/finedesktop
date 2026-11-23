@@ -256,6 +256,8 @@ ctl menu launch >/dev/null; ctl menu list | grep -q 'Glosnik' && ok "launcher sh
 ctl menu list | grep -n '^> ' | grep -q 'Aplikacje' && ok "launcher cursor starts on Aplikacje, not the sliders" || bad "launcher cursor"
 ctl menu list | sed -n 2,12p | tr '\n' ' ' | grep -q 'Aplikacje.*Schowek.*Kalkulator.*Zasilanie.*Ustawienia' && ok "launcher root list" || bad "launcher root list"
 ctl menu type sh >/dev/null; ctl menu list | head -1 | grep -q 'Uruchom' && ok "typing on the root searches" || bad "root search"
+ctl menu key backspace >/dev/null; ctl menu key backspace >/dev/null; ctl menu type Przyspieszenie >/dev/null; ctl menu list | grep -q 'Przyspieszenie' && ok "the launcher search finds a setting" || bad "launcher finds settings"
+ctl menu key esc >/dev/null; ctl menu launch >/dev/null; ctl menu type sh >/dev/null
 ctl menu key backspace >/dev/null; ctl menu key backspace >/dev/null; ctl menu list | head -1 | grep -q '^Menu$' && ok "erasing the search returns to the root" || bad "search back"
 ctl menu key esc >/dev/null
 
