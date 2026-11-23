@@ -50,6 +50,10 @@ pub struct Desktop {
     pub loop_signal: LoopSignal,
     pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Desktop>,
     pub drm: Option<crate::components::compositor_drm::Drm>,
+    /// libinput devices that are plugged in (to apply `pointer_speed`, `natural_scroll`, `tap_to_click` when the config changes)
+    /// the theme being made in the theme editor (components/panels.rs)
+    pub theme_draft: Option<crate::components::panels::Draft>,
+    pub input_devices: Vec<smithay::reexports::input::Device>,
     pub dmabuf_state: smithay::wayland::dmabuf::DmabufState,
     /// imports waiting for a renderer that is not in the state (the nested winit backend answers them on its next frame)
     pub dmabuf_pending: Vec<(smithay::backend::allocator::dmabuf::Dmabuf, smithay::wayland::dmabuf::ImportNotifier)>,
@@ -86,6 +90,8 @@ pub struct Desktop {
     pub widgets: crate::components::widgets::Widgets,
     pub engine: crate::engine_host::EngineHost,
     pub menu: Option<crate::components::menu::Menu>,
+    /// the navigation key held in the menu (repeated by `menu_hold_step`)
+    pub menu_hold: Option<crate::components::menu::Hold>,
     /// something the bar shows changed; redraw on the next frame
     pub bar_dirty: bool,
     /// windows already announced: id -> (app_id, title)
@@ -142,7 +148,7 @@ impl Desktop {
         // Notify clients that we have a keyboard, for the sake of the example we assume that keyboard is always present.
         // You may want to track keyboard hot-plug in real compositor.
         let config = Config::load();
-        seat.add_keyboard(Self::xkb(&config), 200, 25).unwrap();
+        seat.add_keyboard(Self::xkb(&config), config.kb_repeat_delay, config.kb_repeat_rate).unwrap();
 
         // Notify clients that we have a pointer (mouse)
         // Here we assume that there is always pointer plugged in
@@ -196,6 +202,9 @@ impl Desktop {
             widgets: crate::components::widgets::Widgets::start(),
             engine: Default::default(),
             menu: None,
+            menu_hold: None,
+            theme_draft: None,
+            input_devices: Vec::new(),
             bar_dirty: true,
             known: Default::default(),
             last_focus: None,
@@ -203,7 +212,7 @@ impl Desktop {
             prev_win: None,
             welcome: Default::default(),
             capture: Default::default(),
-            notes: Default::default(),
+            notes: crate::components::notification::notts::Notes::load(crate::components::notification::notts::state_dir()),
             fx: Default::default(),
             ruled: Default::default(),
             pending: Vec::new(),
@@ -298,7 +307,8 @@ impl Desktop {
     /// Register an output: map it right of the existing ones and give it its workspaces.
     pub fn add_output(&mut self, output: Output) {
         let x: i32 = self.mons.iter().filter_map(|m| self.space.output_geometry(&m.output)).map(|g| g.size.w).sum();
-        self.space.map_output(&output, (x, 0));
+        let at = self.config.outputs.iter().find(|o| o.name == output.name()).and_then(|o| o.pos).unwrap_or((x, 0));
+        self.space.map_output(&output, at);
         let ws = (0..self.config.workspaces).map(|_| self.new_workspace()).collect();
         self.mons.push(Mon { output, ws, cur: 0, bar: None });
     }
@@ -756,6 +766,22 @@ impl Desktop {
         }
     }
 
+    /// Put the pointer and touchpad settings of the config on every plugged-in libinput device (what a device lacks is skipped).
+    pub fn apply_input(&mut self) {
+        let c = &self.config;
+        for d in &mut self.input_devices {
+            if d.config_accel_is_available() {
+                let _ = d.config_accel_set_speed(c.pointer_speed as f64);
+            }
+            if d.config_scroll_has_natural_scroll() {
+                let _ = d.config_scroll_set_natural_scroll_enabled(c.natural_scroll);
+            }
+            if d.config_tap_finger_count() > 0 {
+                let _ = d.config_tap_set_enabled(c.tap_to_click);
+            }
+        }
+    }
+
     pub fn load_config(&mut self) {
         self.config = Config::load();
         if let Some(kb) = self.seat.get_keyboard() {
@@ -763,7 +789,9 @@ impl Desktop {
             if let Err(e) = kb.set_xkb_config(self, Self::xkb(&cfg)) {
                 tracing::warn!("xkb config: {e:?}");
             }
+            kb.change_repeat_info(cfg.kb_repeat_rate, cfg.kb_repeat_delay);
         }
+        self.apply_input();
         self.mode = None;
         self.widgets.configure(&self.config);
         self.reload_panels();
@@ -800,8 +828,11 @@ impl Desktop {
         match a {
             Action::Spawn(cmd) => crate::keys::spawn(&cmd),
             Action::Close => {
-                if let Some(t) = self.focused().and_then(|(_, w)| w.toplevel()) {
-                    t.send_close();
+                if let Some(w) = self.focused().map(|(_, w)| w.clone()) {
+                    self.tmux_kill_for(&w);
+                    if let Some(t) = w.toplevel() {
+                        t.send_close();
+                    }
                 }
             }
             Action::Quit => self.loop_signal.stop(),

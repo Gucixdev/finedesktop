@@ -20,7 +20,7 @@ mkdir -p "$log/cfg/welcome"
 printf '# Tips\n\nSee [the shell](shell.md) or [site](https://example.org) or [nowhere](missing.md).\n- one\n' > "$log/cfg/welcome/tips.md"
 printf '# Shell\n\nBack to [tips](tips.md).\n' > "$log/cfg/welcome/shell.md"
 touch "$log/start"; sleep 0.05
-FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" "$bin" >"$log/c.log" 2>&1 &
+FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" XDG_STATE_HOME="$log/state" "$bin" >"$log/c.log" 2>&1 &
 cpid=$!
 trap 'kill $cpid 2>/dev/null; wait $cpid 2>/dev/null' EXIT
 
@@ -141,7 +141,96 @@ ctl menu list 2>&1 | grep -q 'not open' && ok "menu closes after a choice" || ba
 ctl layout tile >/dev/null
 ctl menu open apps >/dev/null; ctl menu key backspace >/dev/null; ctl menu list | head -1 | grep -q '^Menu$' && ok "backspace leaves a level" || bad "backspace level"
 ctl menu key esc >/dev/null; ctl menu list 2>&1 | grep -q 'not open' && ok "esc closes the menu" || bad "esc"
+ctl menu open fonts >/dev/null; ctl menu list | head -1 | grep -q '^Menu > Ustawienia > Czcionki$' && ctl menu list | grep -q 'wbudowana' && ok "fonts panel lists the built-in font" || bad "fonts panel"
+ctl menu key esc >/dev/null
+ctl menu open apps >/dev/null; ctl menu list | grep -q 'Terminal\|Flatpak\|Natywne' && ok "apps list has sections" || bad "apps sections"
+ctl menu key esc >/dev/null
+ctl menu open create_theme >/dev/null; ctl menu list | grep -q 'Zapisz jako: custom' && ok "theme editor lists colours and save" || bad "theme editor"
+ctl menu key down >/dev/null; ctl menu key enter >/dev/null; ctl menu list | head -1 | grep -q 'Utworz motyw > Kolor' && ok "enter on a colour opens the picker" || bad "picker open"
+ctl menu type "#102030" >/dev/null; ctl menu list | grep -q 'Ustaw #102030' && ok "typed colour is offered" || bad "typed colour"
+ctl menu key esc >/dev/null; ctl menu list 2>&1 | grep -q 'not open' && ok "esc leaves the editor" || bad "editor esc"
+ctl menu open theme-import >/dev/null; ctl menu type /nonexistent/x.theme >/dev/null; ctl menu key enter >/dev/null; ctl menu list | grep -q 'Importuj' && ok "import offers the typed path" || bad "import"
+ctl menu key esc >/dev/null
+ctl menu open create_theme >/dev/null; ctl menu type e2etheme >/dev/null
+for _ in $(seq 12); do ctl menu key down >/dev/null; done
+ctl menu key enter >/dev/null; sleep 0.3
+[ -f "$log/cfg/themes/e2etheme" ] && grep -q '^theme = e2etheme' "$log/cfg/config" && ok "theme editor saves a theme and uses it" || bad "theme save"
+cp "$log/cfg/themes/e2etheme" "$log/imp.theme"; sed -i 's/^accent.*/accent = #123456/' "$log/imp.theme"
+ctl menu open theme-import >/dev/null; ctl menu type "$log/imp.theme" >/dev/null; ctl menu key down >/dev/null; ctl menu key enter >/dev/null; sleep 0.3
+[ -f "$log/cfg/themes/imp" ] && grep -q '^theme = imp' "$log/cfg/config" && ok "theme file imported and used" || bad "theme import"
+echo 'nonsense' > "$log/bad.theme"
+ctl menu open theme-import >/dev/null; ctl menu type "$log/bad.theme" >/dev/null; ctl menu key down >/dev/null; ctl menu key enter >/dev/null
+[ ! -f "$log/cfg/themes/bad" ] && ok "a non-theme file is refused" || bad "bad theme imported"
+ctl menu key esc >/dev/null
+ctl menu open bar >/dev/null; ctl menu list | grep -q 'u gory' && ok "bar panel" || bad "bar panel"
+ctl menu key esc >/dev/null
+ctl menu open input >/dev/null; ctl menu list | grep -q 'Szybkosc wskaznika' && ok "keyboard and mouse panel" || bad "input panel"
+ctl menu key esc >/dev/null
+ctl menu open screens >/dev/null
+ctl menu open screens >/dev/null; ctl menu list | head -1 | grep -q 'Ekrany' && ok "screens panel opens" || bad "screens panel"
+ctl menu key enter 2>&1 | grep -q 'saved' || true
+grep -q '^output = winit' "$log/cfg/config" && ok "screen choice is written to the config" || bad "screen persist"
+ctl menu key esc >/dev/null
+ctl menu open prefer >/dev/null; ctl menu list | grep -q 'pdf (pdf epub djvu)' && ctl menu list | grep -q 'cad (stl' && ok "prefer lists the file formats" || bad "prefer formats"
+ctl menu key up >/dev/null; ctl menu list | grep '^> ' | grep -q 'mail' && ok "Up on the first row wraps to the last" || bad "wrap up"
+ctl menu key down >/dev/null; ctl menu list | grep '^> ' | grep -q 'terminal' && ok "Down on the last row wraps to the first" || bad "wrap down"
+ctl menu key esc >/dev/null
+ctl menu open audio >/dev/null; ctl menu list | head -1 | grep -q 'Dzwiek' && ok "sound panel opens" || bad "sound panel"
+ctl menu key esc >/dev/null
+ctl menu open keys >/dev/null; ctl menu list | grep -q 'Super+Return' && ok "shortcuts panel lists the binds" || bad "shortcuts list"
+ctl menu type "mod+shift, F9, spawn true" >/dev/null; ctl menu list | grep -q 'Dodaj skrot' && ok "a typed shortcut is offered" || bad "bind offer"
+ctl menu key enter >/dev/null
+grep -q '^bind = mod+shift, F9, spawn true' "$log/cfg/config" && ok "shortcut is written to the config" || bad "bind persist"
+ctl menu type F9 >/dev/null; ctl menu list | grep -q 'Super+Shift+F9' && ok "the new shortcut is live and listed" || bad "bind live"
+ctl menu key enter >/dev/null
+! grep -q 'F9' "$log/cfg/config" && ok "removing a shortcut drops its line" || bad "bind remove"
+ctl menu type "mod, Return" >/dev/null; ctl menu key esc >/dev/null
+ctl menu open keys >/dev/null; ctl menu type "mod+shift, Return, spawn x" >/dev/null; ctl menu key enter >/dev/null; ctl menu type Super+Shift+Return >/dev/null; ctl menu key enter >/dev/null
+grep -q '^unbind = super+shift, Return' "$log/cfg/config" && ok "removing a default shortcut writes an unbind" || bad "unbind"
+ctl menu key esc >/dev/null
+mkdir -p "$log/cfg/autostart"; printf '#!/bin/sh\ntrue\n' > "$log/cfg/autostart/e2e"; chmod +x "$log/cfg/autostart/e2e"
+ctl menu open autostart >/dev/null; ctl menu list | grep -q '\[x\] e2e' && ok "autostart lists an executable as on" || bad "autostart list"
+ctl menu key space >/dev/null; [ ! -x "$log/cfg/autostart/e2e" ] && ok "space turns an autostart file off" || bad "autostart toggle"
+ctl menu key esc >/dev/null
+out=$(ctl menu open bluetooth 2>&1; ctl menu list 2>&1); echo "$out" | grep -qE "Blueman|Urzadzenia" && ok "bluetooth panel lists blueman or says it is missing" || { echo "$out" >&2; bad "bluetooth panel"; }
+ctl menu key esc >/dev/null
+# notification center: groups by app, do-not-disturb, snooze, mute, per-app log, the panel
+ctl notify send -a discord -t im.received "ping from discord" | grep -q '^ok' && ok "notify send posts under an app" || bad "notify send"
+ctl notify apps | grep -qP '^discord\t1\t' && ok "notify apps groups by app" || bad "notify apps"
+ctl notify dnd on | grep -q 'dnd on' && ctl notify send -a matrix "quiet one" >/dev/null && ctl notify status | grep -q 'missed 1' && ok "dnd holds a note back and counts it as missed" || bad "dnd"
+ctl notify send -a matrix -u critical "fire" >/dev/null; ctl notify list matrix | grep -q 'fire' && ok "a critical note goes through dnd" || bad "critical"
+ctl menu open notes >/dev/null; ctl menu list | grep -q 'discord' && ctl menu list | grep -q 'wycisz matrix' && ok "the panel groups notes per app" || bad "notts panel"
+ctl notify status | grep -q 'missed 0' && ok "opening the panel marks the missed notes seen" || bad "missed not cleared"
+ctl menu key esc >/dev/null
+ctl notify dnd off >/dev/null; ctl notify snooze 5 | grep -q 'snooze 5 min' && ctl notify status | grep -q 'snooze [45] min' && ok "snooze" || bad "snooze"
+ctl notify snooze off >/dev/null; ctl notify snooze 0x 2>&1 | grep -q '^error' && ok "bad snooze rejected" || bad "bad snooze"
+ctl notify mute discord >/dev/null; ctl notify apps | grep -qP '^discord\t1\t.*\tmuted' && ok "mute shows in the groups" || bad "mute"
+ctl notify unmute discord >/dev/null
+ctl notify log discord | grep -q 'ping from discord' && [ -f "$log/state/finedesktop/notts/log/discord.log" ] && ok "every note lands in the app's log" || bad "notify log"
+ctl notify send -u loud x 2>&1 | grep -q '^error' && ok "bad urgency rejected" || bad "bad urgency"
+ctl notify clear discord >/dev/null; ctl notify apps | grep -q '^discord' && bad "clear one app" || ok "clear one app"
+ctl notify clear >/dev/null; ctl notify | grep -q 'no notifications' && ok "clear all" || bad "clear all"
 ctl menu open nonsense 2>&1 | grep -q '^error' && ok "bad menu id rejected" || bad "bad menu id"
+
+# the launcher opens on the root list; typing searches everything, erasing it all comes back
+ctl menu launch >/dev/null; ctl menu list | grep -q 'Glosnik' && ok "launcher shows the sound sliders on top" || bad "launcher sound rows"
+ctl menu list | grep -n '^> ' | grep -q 'Aplikacje' && ok "launcher cursor starts on Aplikacje, not the sliders" || bad "launcher cursor"
+ctl menu list | sed -n 2,12p | tr '\n' ' ' | grep -q 'Aplikacje.*Schowek.*Kalkulator.*Zasilanie.*Ustawienia' && ok "launcher root list" || bad "launcher root list"
+ctl menu type sh >/dev/null; ctl menu list | head -1 | grep -q 'Uruchom' && ok "typing on the root searches" || bad "root search"
+ctl menu key backspace >/dev/null; ctl menu key backspace >/dev/null; ctl menu list | head -1 | grep -q '^Menu$' && ok "erasing the search returns to the root" || bad "search back"
+ctl menu key esc >/dev/null
+
+# the settings panel has checkboxes and sliders, saved to the config
+ctl menu open general >/dev/null; ctl menu list | grep -q '\[ \] Fokus za myszka' && ok "settings checkbox is off" || bad "settings checkbox"
+ctl menu key space >/dev/null; ctl menu list | grep -q '\[x\] Fokus za myszka' && ok "space flips the checkbox" || bad "checkbox flip"
+grep -q 'focus_follows_mouse = on' "$log/cfg/config" && ok "checkbox is written to the config" || bad "checkbox persist"
+for _ in 1 2 3 4 5 6 7 8; do ctl menu key down >/dev/null; done
+ctl menu key right >/dev/null; ctl menu key right >/dev/null; ctl menu list | grep -q 'Odstep miedzy oknami: 2' && ok "right moves the slider" || bad "slider"
+grep -q 'gap = 2' "$log/cfg/config" && ok "slider is written to the config" || bad "slider persist"
+ctl menu key esc >/dev/null
+ctl menu open power >/dev/null; ctl menu list | grep -q 'poweroff' && ok "power list" || bad "power list"
+ctl menu key esc >/dev/null
+ctl menu open general >/dev/null; ctl menu key space >/dev/null; ctl menu key esc >/dev/null
 
 # calculator and preferred applications through the menu / ctl
 ctl menu open calc >/dev/null; ctl menu type "2+3*4" >/dev/null
@@ -155,6 +244,9 @@ ctl menu key esc >/dev/null
 ctl bogus >/dev/null 2>&1 && bad "bogus action accepted" || ok "bogus action rejected"
 ctl layout nope 2>&1 | grep -q '^error' && ok "bad layout rejected" || bad "bad layout accepted"
 
+ctl theme official-dark >/dev/null; ctl theme toggle | grep -q '^ok' && ctl theme list | grep -q 'official-light\*' && ok "theme toggle goes dark to light" || bad "theme toggle"
+ctl theme toggle >/dev/null; ctl theme list | grep -q 'official-dark\*' && ok "theme toggle goes back" || bad "theme toggle back"
+ctl theme sepia 2>&1 | grep -q '^error' && ok "unknown theme still rejected" || bad "unknown theme"
 ctl quit >/dev/null; sleep 0.5
 kill -0 $cpid 2>/dev/null && bad "quit did not stop" || ok "quit stops the compositor"
 trap - EXIT

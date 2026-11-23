@@ -23,6 +23,7 @@ use smithay::{
 };
 
 use super::{
+    stats,
     engine::layout_engine::BarKind,
     font::{self, Canvas},
     theme::{Rgb, to_f32},
@@ -84,7 +85,7 @@ fn draw_gfx(cv: &mut Canvas, i: &Item, x: i32, bh: i32, cw: i32, scale: i32, t: 
     let (gy, gh) = (3 * scale, bh - 6 * scale);
     let gw = gfx_w(&i.gfx, cw, scale);
     cv.rect(x, gy, gw, gh, t.border_normal);
-    let hot = |v: u8| if v >= 90 { t.urgent } else { i.fg };
+    let hot = |v: u8| stats::level_color(v as u32, t.accent, t);
     match &i.gfx {
         Gfx::None => {}
         Gfx::Graph(h) => {
@@ -126,16 +127,26 @@ impl Desktop {
                 }
             }
             "layout" => out.push(it(format!("[{}]", m.ws[m.cur].layout.name()), t.accent)),
-            "cpu" => out.push(it(format!("cpu {}%", sh.cpu), t.fg)),
-            "ram" => out.push(it(format!("ram {}%", sh.ram), t.fg)),
-            "cpu-graph" | "ram-graph" | "gpu-graph" | "vram-graph" => {
+            "cpu" => out.push(it(format!("cpu {}%", sh.cpu), stats::level_color(sh.cpu, t.fg, t))),
+            "ram" => out.push(it(format!("ram {}%", sh.ram), stats::level_color(sh.ram, t.fg, t))),
+            "swap" => {
+                if let Some(v) = sh.swap {
+                    out.push(it(format!("swap {v}%"), stats::level_color(v, t.fg, t)));
+                }
+            }
+            // history graph + the current percentage; both turn yellow from 60 % and red from 90 %
+            "cpu-graph" | "ram-graph" | "gpu-graph" | "vram-graph" | "swap-graph" => {
                 let key = name.trim_end_matches("-graph");
                 if let Some(h) = sh.hist.get(key).filter(|h| !h.is_empty()) {
-                    out.push(with_gfx(key, t.dim, Gfx::Graph(h.clone())));
-                    // the graph takes the accent colour, the label stays dim
-                    if let Some(last) = out.last_mut() {
-                        last.fg = t.accent;
-                    }
+                    let v = *h.last().unwrap_or(&0) as u32;
+                    out.push(with_gfx(&format!("{key} {v}%"), stats::level_color(v, t.fg, t), Gfx::Graph(h.clone())));
+                }
+            }
+            // every real disk: name, used %, a fill bar
+            "disks" => {
+                for d in &sh.disks {
+                    let v = d.used_pct();
+                    out.push(with_gfx(&format!("{} {v}%", d.label()), stats::level_color(v, t.fg, t), Gfx::Fill(v as u8)));
                 }
             }
             "disk" => {
@@ -146,10 +157,7 @@ impl Desktop {
             "disk-bar" => {
                 if let Some((total, free)) = sh.disk {
                     let used = (total - free.min(total)) * 100 / total;
-                    out.push(with_gfx("disk", t.fg, Gfx::Fill(used as u8)));
-                    if let Some(last) = out.last_mut() {
-                        last.fg = t.accent;
-                    }
+                    out.push(with_gfx(&format!("disk {used}%"), stats::level_color(used as u32, t.fg, t), Gfx::Fill(used as u8)));
                 }
             }
             "|" => out.push(it("|", t.dim)),
@@ -160,22 +168,26 @@ impl Desktop {
             }
             "gpu" => {
                 if let Some((g, _)) = sh.gpu {
-                    out.push(it(format!("gpu {g}%"), t.fg));
+                    out.push(it(format!("gpu {g}%"), stats::level_color(g, t.fg, t)));
                 }
             }
             "vram" => {
                 if let Some((_, v)) = sh.gpu {
-                    out.push(it(format!("vram {v}%"), t.fg));
+                    out.push(it(format!("vram {v}%"), stats::level_color(v, t.fg, t)));
                 }
             }
             "bat" => {
                 if let Some((p, chg)) = sh.bat {
-                    out.push(it(format!("bat {p}%{}", if chg { "+" } else { "" }), if p <= 15 && !chg { t.urgent } else { t.fg }));
+                    out.push(it(format!("bat {p}%{}", if chg { "+" } else { "" }), if p <= 15 && !chg { t.err } else { t.fg }));
                 }
             }
             "notify" => {
                 if let Some(n) = self.notes.current() {
-                    out.push(it(format!("! {}", n.text.chars().take(60).collect::<String>()), t.urgent));
+                    let from = if n.app == "ctl" { String::new() } else { format!("{}: ", n.app) };
+                    out.push(it(format!("! {from}{}", n.text.chars().take(60).collect::<String>()), t.err));
+                } else if self.notes.dnd || self.notes.snoozed() {
+                    let missed = self.notes.missed();
+                    out.push(it(if missed > 0 { format!("dnd ({missed})") } else { "dnd".into() }, t.dim));
                 }
             }
             "date" => out.push(it(widgets::now(&c.date_format), t.fg)),
@@ -191,11 +203,14 @@ impl Desktop {
             }
         };
         let (mut left, mut right) = (Vec::new(), Vec::new());
-        for n in &c.bar_left {
-            one(n, &mut left);
+        // `stats` is a shorthand for the whole set
+        const STATS: [&str; 6] = ["cpu-graph", "gpu-graph", "ram-graph", "vram-graph", "swap-graph", "disks"];
+        let expand = |names: &Vec<String>| -> Vec<String> { names.iter().flat_map(|n| if n == "stats" { STATS.iter().map(|s| s.to_string()).collect() } else { vec![n.clone()] }).collect() };
+        for n in expand(&c.bar_left) {
+            one(&n, &mut left);
         }
-        for n in &c.bar_right {
-            one(n, &mut right);
+        for n in expand(&c.bar_right) {
+            one(&n, &mut right);
         }
         (left, right)
     }
@@ -374,7 +389,7 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             // the right side: the open level, or (cursor on the tabs) a preview of the tab under the cursor
             let (all, sel_row) = match &tabs {
                 Some(t) if t.focused => {
-                    let rows = t.id.map(|id| state.menu_level(id).items.into_iter().filter(|e| !matches!(e.act, super::menu::Act::Head)).map(|e| super::menu::Row::Item(e.label)).collect()).unwrap_or_default();
+                    let rows = t.id.map(|id| state.menu_level(id).items.into_iter().filter(|e| !matches!(e.act, super::menu::Act::Head)).map(|e| e.row()).collect()).unwrap_or_default();
                     (rows, usize::MAX)
                 }
                 _ => menu.rows(),
@@ -418,6 +433,52 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                         match r {
                             super::menu::Row::Head(t) => {
                                 cv.text(x0, y, &format!("-- {t} --"), th.dim, ms, w - pad);
+                            }
+                            super::menu::Row::Check(label, on) => {
+                                if n == sel {
+                                    cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
+                                }
+                                let fg = if n == sel { th.sel_fg } else { th.fg };
+                                let bx = x0 + if tabs.is_some() { 0 } else { pad };
+                                let sz = lh * 2 / 3;
+                                let by = y + (lh - sz) / 2;
+                                cv.rect(bx, by, sz, sz, fg);
+                                cv.rect(bx + 2, by + 2, sz - 4, sz - 4, if n == sel { th.sel_bg } else { th.bg });
+                                if *on {
+                                    cv.rect(bx + 4, by + 4, sz - 8, sz - 8, if n == sel { th.sel_fg } else { th.accent });
+                                }
+                                cv.text(bx + sz + pad, y, label, fg, ms, w - pad);
+                            }
+                            super::menu::Row::Slider(label, frac, text) => {
+                                if n == sel {
+                                    cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
+                                }
+                                let fg = if n == sel { th.sel_fg } else { th.fg };
+                                let bx = x0 + if tabs.is_some() { 0 } else { pad };
+                                let span = w - bx - pad;
+                                let (track_x, track_w) = (bx + span * 11 / 20, span * 3 / 10);
+                                let th_h = (lh / 4).max(2);
+                                let ty = y + (lh - th_h) / 2;
+                                cv.text(bx, y, label, fg, ms, track_x - bx - pad);
+                                cv.rect(track_x, ty, track_w, th_h, th.border_normal);
+                                let fill = (track_w as f32 * frac) as i32;
+                                cv.rect(track_x, ty, fill, th_h, if n == sel { th.sel_fg } else { th.accent });
+                                let knob = (lh / 2).max(4);
+                                cv.rect(track_x + fill - knob / 2, y + (lh - knob) / 2, knob, knob, fg);
+                                cv.text(track_x + track_w + pad * 2, y, text, fg, ms, w - pad);
+                            }
+                            super::menu::Row::Color(label, c) => {
+                                if n == sel {
+                                    cv.rect(x0 - pad + 2, y, w - x0 + pad - 4, lh, th.sel_bg);
+                                }
+                                let fg = if n == sel { th.sel_fg } else { th.fg };
+                                let bx = x0 + if tabs.is_some() { 0 } else { pad };
+                                let (sw, sh) = (lh * 2, lh * 2 / 3);
+                                cv.text(bx, y, label, fg, ms, w - pad - sw - pad * 8 * ms);
+                                let sx = w - pad - sw - Canvas::text_width("#rrggbb", ms) - pad;
+                                cv.rect(sx - 1, y + (lh - sh) / 2 - 1, sw + 2, sh + 2, fg);
+                                cv.rect(sx, y + (lh - sh) / 2, sw, sh, *c);
+                                cv.text(sx + sw + pad, y, &super::theme::hex(*c), fg, ms, w);
                             }
                             super::menu::Row::Item(s) => {
                                 if n == sel {

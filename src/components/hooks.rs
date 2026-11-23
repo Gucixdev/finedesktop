@@ -105,8 +105,8 @@ impl Event {
     pub fn user(name: &str, text: &str) -> Event {
         Event::new("user", format!("user {name} {text}"), vec![("FD_NAME", name.into()), ("FD_TEXT", text.into())])
     }
-    pub fn notify(id: u32, text: &str) -> Event {
-        Event::new("notify", format!("notify {id} {text}"), vec![("FD_NOTE", id.to_string()), ("FD_TEXT", text.into())])
+    pub fn notify(id: u32, text: &str, app: &str, urgency: &str, tag: &str) -> Event {
+        Event::new("notify", format!("notify {id} {app} {text}"), vec![("FD_NOTE", id.to_string()), ("FD_TEXT", text.into()), ("FD_APP", app.into()), ("FD_URGENCY", urgency.into()), ("FD_TAG", tag.into())])
     }
     pub fn minute(hhmm: &str) -> Event {
         Event::new("minute", format!("minute {hhmm}"), vec![("FD_TIME", hhmm.into())])
@@ -322,8 +322,25 @@ impl Desktop {
         if name == "list" {
             return Theme::list_line(&self.config.theme.name);
         }
+        // dark / light / toggle pick the other half of the current theme's pair and are remembered across restarts
+        let special = matches!(name, "toggle" | "dark" | "light");
+        let picked;
+        let name = if special {
+            match Theme::counterpart(&self.config.theme, name, &Theme::list()) {
+                Ok(n) => {
+                    picked = n;
+                    picked.as_str()
+                }
+                Err(e) => return format!("error: {e}"),
+            }
+        } else {
+            name
+        };
         match self.config.set_theme(name) {
             Ok(()) => {
+                if special {
+                    let _ = crate::components::settings::settings_preferaps::persist("theme", name);
+                }
                 self.retile();
                 self.emit(Event::theme(name));
                 "ok".into()
