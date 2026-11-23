@@ -94,6 +94,8 @@ pub struct Desktop {
     pub menu_hold: Option<crate::components::menu::Hold>,
     /// something the bar shows changed; redraw on the next frame
     pub bar_dirty: bool,
+    /// `ctl set KEY VALUE` without `-s`: values in force that the config files do not hold (gone at the next reload)
+    pub runtime_set: Vec<(String, String)>,
     /// windows already announced: id -> (app_id, title)
     pub known: std::collections::HashMap<u32, (String, String)>,
     pub last_focus: Option<u32>,
@@ -208,6 +210,7 @@ impl Desktop {
             theme_draft: None,
             input_devices: Vec::new(),
             bar_dirty: true,
+            runtime_set: Vec::new(),
             known: Default::default(),
             last_focus: None,
             last_win: None,
@@ -799,6 +802,13 @@ impl Desktop {
 
     pub fn load_config(&mut self) {
         self.config = Config::load();
+        self.runtime_set.clear();
+        self.config_applied();
+        self.emit(crate::components::hooks::Event::reload());
+    }
+
+    /// Everything that follows a changed `self.config`: keyboard, input devices, wallpaper, widgets, panels, workspaces.
+    pub fn config_applied(&mut self) {
         if let Some(kb) = self.seat.get_keyboard() {
             let cfg = self.config.clone();
             if let Err(e) = kb.set_xkb_config(self, Self::xkb(&cfg)) {
@@ -812,7 +822,6 @@ impl Desktop {
         self.widgets.configure(&self.config);
         self.reload_panels();
         self.bar_dirty = true;
-        self.emit(crate::components::hooks::Event::reload());
         let c = self.config.clone();
         for m in &mut self.mons {
             while m.ws.len() < c.workspaces {
@@ -832,7 +841,7 @@ impl Desktop {
     }
 
     pub fn run_action(&mut self, a: Action) -> String {
-        if !matches!(a, Action::Log(_) | Action::State(_)) {
+        if !matches!(a, Action::Log(_) | Action::State(_) | Action::Get(_)) {
             tracing::info!("action: {a:?}");
         }
         let n_mon = self.mons.len();
@@ -896,6 +905,8 @@ impl Desktop {
             Action::Notify(arg) => return self.notify_cmd(&arg),
             Action::Log(n) => return crate::components::log::tail(&n),
             Action::Theme(name) => return self.set_theme(&name),
+            Action::Set(arg) => return self.set_cmd(&arg),
+            Action::Get(key) => return self.get_cmd(&key),
             Action::Mode(name) => return self.set_mode(&name),
             Action::Emit(text) => {
                 let (name, rest) = text.split_once(' ').unwrap_or((text.as_str(), ""));

@@ -232,6 +232,16 @@ ctl notify send -u loud x 2>&1 | grep -q '^error' && ok "bad urgency rejected" |
 ctl notify clear discord >/dev/null; ctl notify apps | grep -q '^discord' && bad "clear one app" || ok "clear one app"
 ctl notify clear >/dev/null; ctl notify | grep -q 'no notifications' && ok "clear all" || bad "clear all"
 # hardware panels: they list something or say why not, and never break
+# ctl set / get: any config key, hot; without -s only until the next reload, with -s saved
+[ "$(ctl get font_scale)" = 1 ] && ok "get reads the built-in value" || bad "get default"
+ctl set font_scale 2 | grep -q '^ok' && [ "$(ctl get font_scale)" = 2 ] && ! grep -q '^font_scale' "$log/cfg/config" && ok "set is hot and not saved" || bad "set runtime"
+ctl set font_scale = 9x | grep -q '^error' && [ "$(ctl get font_scale)" = 2 ] && ok "set refuses a bad value and changes nothing" || bad "set bad"
+ctl reload >/dev/null; [ "$(ctl get font_scale)" = 1 ] \
+  && ctl set mfact 0.7 | grep -q "^ok" && [ "$(ctl get mfact)" = 0.7 ] && ctl reload >/dev/null && [ "$(ctl get mfact)" != 0.7 ] && ok "reload drops an unsaved set" || bad "set reload"
+ctl set -s font_scale 3 | grep -q '^ok' && grep -q '^font_scale = 3' "$log/cfg/config" && [ "$(ctl get font_scale)" = 3 ] && ok "set -s saves" || bad "set -s"
+ctl set -s font_scale 1 >/dev/null
+ctl get nonesuch | grep -q '^error' && ok "get of an unknown key says so" || bad "get unknown"
+
 for pan in wallpaper devices drivers screens input; do
   ctl menu open $pan >/dev/null; ctl menu list | head -3 | grep -q . && ok "panel $pan opens" || bad "panel $pan"
   ctl menu key esc >/dev/null

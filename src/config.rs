@@ -97,6 +97,10 @@ pub enum Action {
     Vt(u8),
     /// `theme NAME`, `theme list`
     Theme(String),
+    /// `set [-s] KEY VALUE`: a config key changed in the running desktop (`-s` also saves it)
+    Set(String),
+    /// `get KEY`: the value in force
+    Get(String),
     /// `mode NAME`, `mode off`, `mode list`
     Mode(String),
     /// `emit NAME TEXT`: a user event for hooks and subscribers
@@ -344,6 +348,8 @@ pub fn parse_action(line: &str) -> Result<Action, String> {
         "screenrecord" => Action::Screenrecord(rest.into()),
         "zoom" => Action::Zoom,
         "theme" if !rest.is_empty() => Action::Theme(rest.into()),
+        "set" if !rest.is_empty() => Action::Set(rest.into()),
+        "get" if !rest.is_empty() => Action::Get(rest.into()),
         "mode" if !rest.is_empty() => Action::Mode(rest.into()),
         "emit" if !rest.is_empty() => Action::Emit(rest.into()),
         "bar" if !rest.is_empty() => Action::Bar(rest.into()),
