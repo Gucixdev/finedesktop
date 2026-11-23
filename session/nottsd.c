@@ -6,6 +6,9 @@
  *   build:  make            (libsystemd, or elogind's sd-bus on Void)
  *   run:    nottsd &        (from the session script; a second copy finds the name taken and exits)
  *   FD_NOTTS_CTL=cmd        command used instead of `finedesktop` (the tests point it at a logger)
+ *
+ * Actions: the `actions` of a Notify are passed on (`-i ID -A key=Label,...`, percent-encoded); the center calls
+ * org.finedesktop.Notts.InvokeAction(id, key) on this daemon, which emits the standard ActionInvoked + NotificationClosed.
  */
 #include <ctype.h>
 #include <errno.h>
@@ -61,10 +64,31 @@ static void word(const char *in, char *out, size_t cap, const char *dflt)
 		snprintf(out, cap, "%s", dflt);
 }
 
-static void post(const char *app, const char *urg, const char *tag, const char *text)
+/* a key or label as one ctl token: alphanumerics and -_. stay, space is +, the rest %XX */
+static void enc(const char *in, char *out, size_t cap)
+{
+	size_t n = 0;
+
+	for (; *in && n + 4 < cap; in++) {
+		unsigned char c = (unsigned char)*in;
+
+		if (isalnum(c) || c == '-' || c == '_' || c == '.')
+			out[n++] = c;
+		else if (c == ' ')
+			out[n++] = '+';
+		else
+			n += snprintf(out + n, 4, "%%%02X", c);
+	}
+	out[n] = '\0';
+}
+
+#define ACT_MAX 1024
+
+static void post(const char *app, const char *urg, const char *tag, const char *text, uint32_t id, const char *acts)
 {
 	const char *ctl = getenv("FD_NOTTS_CTL");
-	char *argv[16];
+	char idbuf[16];
+	char *argv[24];
 	int i = 0;
 	pid_t pid;
 
@@ -79,6 +103,13 @@ static void post(const char *app, const char *urg, const char *tag, const char *
 	if (*tag) {
 		argv[i++] = "-t";
 		argv[i++] = (char *)tag;
+	}
+	snprintf(idbuf, sizeof(idbuf), "%u", id);
+	argv[i++] = "-i";
+	argv[i++] = idbuf;
+	if (*acts) {
+		argv[i++] = "-A";
+		argv[i++] = (char *)acts;
 	}
 	argv[i++] = "--";
 	argv[i++] = (char *)text;
@@ -95,7 +126,7 @@ static int m_caps(sd_bus_message *m, void *u, sd_bus_error *err)
 	(void)u; (void)err;
 	if ((rc = sd_bus_message_new_method_return(m, &r)) < 0)
 		return rc;
-	if ((rc = sd_bus_message_append(r, "as", 2, "body", "persistence")) < 0)
+	if ((rc = sd_bus_message_append(r, "as", 3, "body", "persistence", "actions")) < 0)
 		return rc;
 	rc = sd_bus_send(NULL, r, NULL);
 	sd_bus_message_unref(r);
@@ -116,21 +147,54 @@ static int m_close(sd_bus_message *m, void *u, sd_bus_error *err)
 	(void)u; (void)err;
 	if (r < 0)
 		return r;
+	sd_bus_emit_signal(sd_bus_message_get_bus(m), "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "NotificationClosed", "uu", id, 3u);
+	return sd_bus_reply_method_return(m, "");
+}
+
+/* org.finedesktop.Notts.InvokeAction(id, key): the center says the user chose an action */
+static int m_invoke(sd_bus_message *m, void *u, sd_bus_error *err)
+{
+	uint32_t id;
+	const char *key;
+	sd_bus *bus = sd_bus_message_get_bus(m);
+	int r = sd_bus_message_read(m, "us", &id, &key);
+
+	(void)u; (void)err;
+	if (r < 0)
+		return r;
+	sd_bus_emit_signal(bus, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "ActionInvoked", "us", id, key);
+	sd_bus_emit_signal(bus, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "NotificationClosed", "uu", id, 2u);
 	return sd_bus_reply_method_return(m, "");
 }
 
 static int m_notify(sd_bus_message *m, void *u, sd_bus_error *err)
 {
 	const char *app, *icon, *summary, *body;
-	char urg[9] = "normal", tag[64] = "", a[128], text[TEXT_MAX + 4], s[TEXT_MAX / 2], b[TEXT_MAX / 2];
-	uint32_t rid;
+	char urg[9] = "normal", tag[64] = "", a[128], text[TEXT_MAX + 4], s[TEXT_MAX / 2], b[TEXT_MAX / 2], acts[ACT_MAX] = "";
+	uint32_t rid, id;
+	size_t an = 0;
 	int32_t timeout;
 	int r;
 
 	(void)u; (void)err;
 	if ((r = sd_bus_message_read(m, "susss", &app, &rid, &icon, &summary, &body)) < 0)
 		return r;
-	if ((r = sd_bus_message_skip(m, "as")) < 0)
+	if ((r = sd_bus_message_enter_container(m, 'a', "s")) < 0)
+		return r;
+	for (;;) {
+		const char *key, *label;
+		char ek[128], el[256];
+
+		if ((r = sd_bus_message_read(m, "s", &key)) <= 0)
+			break;
+		if ((r = sd_bus_message_read(m, "s", &label)) <= 0)
+			break;
+		enc(key, ek, sizeof(ek));
+		enc(label, el, sizeof(el));
+		if (an + strlen(ek) + strlen(el) + 3 < sizeof(acts))
+			an += snprintf(acts + an, sizeof(acts) - an, "%s%s=%s", an ? "," : "", ek, el);
+	}
+	if (r < 0 || (r = sd_bus_message_exit_container(m)) < 0)
 		return r;
 	if ((r = sd_bus_message_enter_container(m, 'a', "{sv}")) < 0)
 		return r;
@@ -170,9 +234,16 @@ static int m_notify(sd_bus_message *m, void *u, sd_bus_error *err)
 	snprintf(text, sizeof(text), "%s%s%s", s, *s && *b ? ": " : "", b);
 	if (!*text)
 		snprintf(text, sizeof(text), "(empty)");
-	post(a, urg, tag, text);
-	return sd_bus_reply_method_return(m, "u", rid ? rid : next_id++);
+	id = rid ? rid : next_id++;
+	post(a, urg, tag, text, id, acts);
+	return sd_bus_reply_method_return(m, "u", id);
 }
+
+static const sd_bus_vtable vt_notts[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD("InvokeAction", "us", "", m_invoke, SD_BUS_VTABLE_UNPRIVILEGED),
+	SD_BUS_VTABLE_END
+};
 
 static const sd_bus_vtable vt[] = {
 	SD_BUS_VTABLE_START(0),
@@ -197,6 +268,10 @@ int main(void)
 		return 1;
 	}
 	if ((r = sd_bus_add_object_vtable(bus, NULL, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", vt, NULL)) < 0) {
+		fprintf(stderr, "nottsd: %s\n", strerror(-r));
+		return 1;
+	}
+	if ((r = sd_bus_add_object_vtable(bus, NULL, "/org/freedesktop/Notifications", "org.finedesktop.Notts", vt_notts, NULL)) < 0) {
 		fprintf(stderr, "nottsd: %s\n", strerror(-r));
 		return 1;
 	}

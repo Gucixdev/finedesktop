@@ -15,12 +15,22 @@ dbus-run-session -- sh -c '
 second line" 
   notify-send "Plain summary only"
   busctl --user call -- org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications Notify susssasa{sv}i "tele gram" 0 "" "-dash" "" 0 1 urgency y 0 -1 > "$T/id"
+  busctl --user monitor --match "type=signal,member=ActionInvoked" --match "type=signal,member=NotificationClosed" > "$T/sig" 2>&1 & mon=$!
+  sleep 0.3
+  busctl --user call -- org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications Notify susssasa{sv}i "files" 0 "" "Done" "copy finished" 4 open "Open folder" default "A+B" 0 -1 > "$T/id2"
+  sleep 0.2
+  busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications org.finedesktop.Notts InvokeAction us "${NID:-$(cut -d" " -f2 "$T/id2")}" open
+  busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications CloseNotification u 77
   sleep 0.5
+  kill $mon
   kill $pid
 '
 grep -q finedesktop-notts "$t/info" && ok "server information" || bad "server information"
-grep -q -- '-a Discord -u critical -t im.received -- Ada: hello there & bye second line' "$t/ctl.log" && ok "app, urgency, category and text arrive flat" || bad "first note"
-grep -q -- '-u normal -- Plain summary only' "$t/ctl.log" && ok "a bare notify-send works" || bad "bare note"
-grep -q -- '-a tele_gram -u low -- -dash' "$t/ctl.log" && ok "spaces in the app and a leading dash are safe" || bad "odd note"
+grep -q -- '-a Discord -u critical -t im.received -i [0-9]* -- Ada: hello there & bye second line' "$t/ctl.log" && ok "app, urgency, category and text arrive flat" || bad "first note"
+grep -q -- '-u normal -i [0-9]* -- Plain summary only' "$t/ctl.log" && ok "a bare notify-send works" || bad "bare note"
+grep -q -- '-a tele_gram -u low -i [0-9]* -- -dash' "$t/ctl.log" && ok "spaces in the app and a leading dash are safe" || bad "odd note"
 grep -q '^u ' "$t/id" && ok "Notify returns an id" || bad "no id"
+grep -q -- '-A open=Open+folder,default=A%2BB' "$t/ctl.log" && ok "actions arrive encoded with the sender's id" || bad "actions"
+grep -q 'ActionInvoked' "$t/sig" && grep -q '"open"' "$t/sig" && ok "InvokeAction emits ActionInvoked" || bad "ActionInvoked"
+grep -c 'NotificationClosed' "$t/sig" | grep -qv '^0$' && ok "choosing an action and CloseNotification emit NotificationClosed" || bad "NotificationClosed"
 [ $fail = 0 ] && echo "ALL OK" || { echo "FAILED (logs in $t)"; cat "$t/ctl.log" 2>/dev/null; exit 1; }

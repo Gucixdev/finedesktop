@@ -4,7 +4,8 @@
 //!
 //!   ctl notify [list [APP]]            the history, newest last: `id  time  app  text`
 //!   ctl notify apps                    the groups: `app  count  last time  muted?`
-//!   ctl notify send [-a APP] [-u low|normal|critical] [-t TAG] TEXT    post one (bare `ctl notify TEXT` does the same)
+//!   ctl notify send [-a APP] [-u low|normal|critical] [-t TAG] [-i DBUSID] [-A key=Label,...] TEXT    post one (bare `ctl notify TEXT` does the same)
+//!   ctl notify invoke ID KEY           choose one of a note's actions: the sender gets ActionInvoked (through nottsd)
 //!   ctl notify dnd [on|off|toggle]     do not disturb: stored and logged, not shown, no hook (critical gets through)
 //!   ctl notify snooze MINUTES|off      do not disturb until then
 //!   ctl notify mute APP | unmute APP   one app silent for good
@@ -72,6 +73,10 @@ pub struct Note {
     /// held back by do-not-disturb, a snooze or a mute: in the history, not on the bar
     pub quiet: bool,
     pub text: String,
+    /// the id the sender knows it by (D-Bus Notify reply); 0 for notes that did not come over the bus
+    pub nid: u32,
+    /// the buttons the sender offered: (key, label)
+    pub actions: Vec<(String, String)>,
 }
 
 #[derive(Default)]
@@ -143,13 +148,17 @@ impl Notes {
     }
 
     pub fn push(&mut self, app: &str, text: &str, urgency: Urgency, tag: &str) -> (u32, bool) {
+        self.push_with(app, text, urgency, tag, 0, Vec::new())
+    }
+
+    pub fn push_with(&mut self, app: &str, text: &str, urgency: Urgency, tag: &str, nid: u32, actions: Vec<(String, String)>) -> (u32, bool) {
         self.next += 1;
         let quiet = self.silent_for(app, urgency);
         if self.list.len() == KEEP {
             self.list.pop_front();
         }
         let stamp = crate::components::widgets::now("%H:%M:%S");
-        self.list.push_back(Note { id: self.next, at: Instant::now(), stamp, app: app.to_string(), tag: tag.to_string(), urgency, quiet, text: text.to_string() });
+        self.list.push_back(Note { id: self.next, at: Instant::now(), stamp, app: app.to_string(), tag: tag.to_string(), urgency, quiet, text: text.to_string(), nid, actions });
         (self.next, quiet)
     }
 
@@ -219,9 +228,47 @@ impl Notes {
     }
 }
 
-/// `-a APP -u URGENCY -t TAG` in front of the text; the rest is the text.
-fn parse_send(arg: &str) -> Result<(String, Urgency, String, String), String> {
-    let (mut app, mut urg, mut tag) = ("ctl".to_string(), Urgency::Normal, String::new());
+/// What `ctl notify send` carries.
+#[derive(Debug)]
+struct Send {
+    app: String,
+    urgency: Urgency,
+    tag: String,
+    text: String,
+    nid: u32,
+    actions: Vec<(String, String)>,
+}
+
+const SEND_USAGE: &str = "notify send [-a APP] [-u URGENCY] [-t TAG] [-i ID] [-A key=Label,...] TEXT";
+
+/// `key=Label,key=Label` with `+` for a space and %XX for anything else (nottsd writes it, one ctl token).
+fn parse_actions(s: &str) -> Result<Vec<(String, String)>, String> {
+    let dec = |t: &str| -> Result<String, String> {
+        let b = t.as_bytes();
+        let (mut out, mut i) = (Vec::new(), 0);
+        while i < b.len() {
+            match b[i] {
+                b'+' => out.push(b' '),
+                b'%' => {
+                    let h = t.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("error: bad %-escape in {t:?}"))?;
+                    out.push(h);
+                    i += 2;
+                }
+                c => out.push(c),
+            }
+            i += 1;
+        }
+        String::from_utf8(out).map_err(|_| format!("error: {t:?} is not utf-8"))
+    };
+    s.split(',').filter(|p| !p.is_empty()).map(|p| {
+        let (k, l) = p.split_once('=').ok_or_else(|| format!("error: action {p:?} is key=Label"))?;
+        Ok((dec(k)?, dec(l)?))
+    }).collect()
+}
+
+/// `-a APP -u URGENCY -t TAG -i ID -A ACTIONS` in front of the text; the rest is the text.
+fn parse_send(arg: &str) -> Result<Send, String> {
+    let mut m = Send { app: "ctl".into(), urgency: Urgency::Normal, tag: String::new(), text: String::new(), nid: 0, actions: Vec::new() };
     let mut rest = arg.trim_start();
     while let Some(r) = rest.strip_prefix('-') {
         if r == "-" || r.starts_with("- ") {
@@ -232,23 +279,30 @@ fn parse_send(arg: &str) -> Result<(String, Urgency, String, String), String> {
         let after = after.trim_start();
         let (val, after) = after.split_once(char::is_whitespace).unwrap_or((after, ""));
         match flag {
-            "a" if !val.is_empty() => app = val.to_string(),
-            "u" => urg = Urgency::parse(val).ok_or_else(|| format!("error: urgency is low, normal or critical, not {val:?}"))?,
-            "t" => tag = val.to_string(),
-            _ => return Err(format!("error: unknown flag -{flag} (notify send [-a APP] [-u URGENCY] [-t TAG] TEXT)")),
+            "a" if !val.is_empty() => m.app = val.to_string(),
+            "u" => m.urgency = Urgency::parse(val).ok_or_else(|| format!("error: urgency is low, normal or critical, not {val:?}"))?,
+            "t" => m.tag = val.to_string(),
+            "i" => m.nid = val.parse().map_err(|_| format!("error: -i takes the D-Bus id (a number), not {val:?}"))?,
+            "A" => m.actions = parse_actions(val)?,
+            _ => return Err(format!("error: unknown flag -{flag} ({SEND_USAGE})")),
         }
         rest = after.trim_start();
     }
     if rest.is_empty() {
-        return Err("error: nothing to say (notify send [-a APP] [-u URGENCY] [-t TAG] TEXT)".into());
+        return Err(format!("error: nothing to say ({SEND_USAGE})"));
     }
-    Ok((app, urg, tag, rest.to_string()))
+    m.text = rest.to_string();
+    Ok(m)
 }
 
 impl Desktop {
     /// Post one note: history, log, bar, hook (the last two only when it is not held back). Returns its id.
     pub fn notify_send(&mut self, app: &str, text: &str, urgency: Urgency, tag: &str) -> u32 {
-        let (id, quiet) = self.notes.push(app, text, urgency, tag);
+        self.notify_post(app, text, urgency, tag, 0, Vec::new())
+    }
+
+    fn notify_post(&mut self, app: &str, text: &str, urgency: Urgency, tag: &str, nid: u32, actions: Vec<(String, String)>) -> u32 {
+        let (id, quiet) = self.notes.push_with(app, text, urgency, tag, nid, actions);
         let stamp = crate::components::widgets::now("%Y-%m-%d %H:%M:%S");
         self.notes.log(app, &format!("{stamp}\t{}\t{}{text}", urgency.name(), if quiet { "(quiet) " } else { "" }));
         self.bar_dirty = true;
@@ -280,13 +334,40 @@ impl Desktop {
         self.notes.save();
     }
 
+    /// `notify invoke ID KEY`: tell the sender (through nottsd, which owns the bus name) that the user chose an action.
+    /// The note's buttons are gone afterwards, as in every notification server.
+    fn notify_invoke(&mut self, arg: &str) -> String {
+        let usage = "error: notify invoke ID KEY (ids and keys: `ctl notify list`)";
+        let Some((id, key)) = arg.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())) else { return usage.into() };
+        let Ok(id) = id.parse::<u32>() else { return usage.into() };
+        let Some(note) = self.notes.list.iter_mut().find(|n| n.id == id) else { return format!("error: no notification {id}") };
+        if note.nid == 0 {
+            return format!("error: notification {id} did not come over D-Bus, nobody to tell");
+        }
+        if !note.actions.iter().any(|(k, _)| k == key) {
+            let have: Vec<&str> = note.actions.iter().map(|(k, _)| k.as_str()).collect();
+            return format!("error: notification {id} has no action {key:?} (have: {})", if have.is_empty() { "none".into() } else { have.join(" ") });
+        }
+        let base = std::env::var("FD_NOTTS_INVOKE").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| {
+            "busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications org.finedesktop.Notts InvokeAction us".into()
+        });
+        let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+        crate::keys::spawn(&format!("{base} {} {}", note.nid, q(key)));
+        note.actions.clear();
+        self.bar_dirty = true;
+        format!("ok invoked {key}")
+    }
+
     pub fn notify_cmd(&mut self, arg: &str) -> String {
         let arg = arg.trim();
         let (word, rest) = arg.split_once(char::is_whitespace).map_or((arg, ""), |(a, b)| (a, b.trim()));
         match word {
             "" | "list" => {
                 let only = (!rest.is_empty()).then_some(rest);
-                let rows: Vec<String> = self.notes.list.iter().filter(|n| only.is_none_or(|a| n.app == a)).map(|n| format!("{}\t{}\t{}\t{}", n.id, n.stamp, n.app, n.text)).collect();
+                let rows: Vec<String> = self.notes.list.iter().filter(|n| only.is_none_or(|a| n.app == a)).map(|n| {
+                    let acts = if n.actions.is_empty() { String::new() } else { format!("\t{}", n.actions.iter().map(|(k, l)| format!("{k}={l}")).collect::<Vec<_>>().join(", ")) };
+                    format!("{}\t{}\t{}\t{}{acts}", n.id, n.stamp, n.app, n.text)
+                }).collect();
                 if rows.is_empty() { "(no notifications)".into() } else { rows.join("\n") }
             }
             "apps" => {
@@ -337,9 +418,10 @@ impl Desktop {
             }
             "status" => self.notes.status(),
             "send" => match parse_send(rest) {
-                Ok((app, urg, tag, text)) => format!("ok {}", self.notify_send(&app, &text, urg, &tag)),
+                Ok(m) => format!("ok {}", self.notify_post(&m.app, &m.text, m.urgency, &m.tag, m.nid, m.actions)),
                 Err(e) => e,
             },
+            "invoke" => self.notify_invoke(rest),
             _ => format!("ok {}", self.notify_send("ctl", arg, Urgency::Normal, "")),
         }
     }
@@ -372,6 +454,9 @@ impl Desktop {
                 let tag = if note.tag.is_empty() { String::new() } else { format!("[{}] ", note.tag) };
                 let quiet = if note.quiet { "(cicho) " } else { "" };
                 v.push(e(&format!("  {}  {quiet}{tag}{}", note.stamp, note.text), Act::Nop));
+                for (key, label) in &note.actions {
+                    v.push(stay(&format!("      > {label}"), format!("notify invoke {} {key}", note.id)));
+                }
             }
             v.push(stay(&if muted { format!("  wlacz powiadomienia {app}") } else { format!("  wycisz {app}") }, format!("notify {} {app}", if muted { "unmute" } else { "mute" })));
             if count > 0 {
@@ -441,14 +526,34 @@ mod tests {
 
     #[test]
     fn send_flags_parse_and_reject() {
-        let (a, u, t, x) = parse_send("-a telegram -u critical -t im.received  hello  world").unwrap();
-        assert_eq!((a.as_str(), u, t.as_str(), x.as_str()), ("telegram", Urgency::Critical, "im.received", "hello  world"));
-        assert_eq!(parse_send("just text").unwrap().0, "ctl");
+        let m = parse_send("-a telegram -u critical -t im.received  hello  world").unwrap();
+        assert_eq!((m.app.as_str(), m.urgency, m.tag.as_str(), m.text.as_str()), ("telegram", Urgency::Critical, "im.received", "hello  world"));
+        assert_eq!(parse_send("just text").unwrap().app, "ctl");
         assert!(parse_send("-u loud x").is_err());
         assert!(parse_send("-a x").is_err());
         assert!(parse_send("-z q text").is_err());
-        let (app, _, _, text) = parse_send("-a x -- -dash and more").unwrap();
-        assert_eq!((app.as_str(), text.as_str()), ("x", "-dash and more"));
+        let m = parse_send("-a x -- -dash and more").unwrap();
+        assert_eq!((m.app.as_str(), m.text.as_str()), ("x", "-dash and more"));
+    }
+
+    #[test]
+    fn actions_decode_spaces_and_escapes_and_reject_nonsense() {
+        let m = parse_send("-a files -i 7 -A open=Open+folder,default=A%2BB%2C -- Done").unwrap();
+        assert_eq!(m.nid, 7);
+        assert_eq!(m.actions, [("open".to_string(), "Open folder".to_string()), ("default".to_string(), "A+B,".to_string())]);
+        assert!(parse_send("-A nokey x").is_err());
+        assert!(parse_send("-A a=%zz x").is_err());
+        assert!(parse_send("-i seven x").is_err());
+    }
+
+    #[test]
+    fn a_note_keeps_its_sender_id_and_buttons() {
+        let mut n = Notes::default();
+        n.push_with("files", "done", Urgency::Normal, "", 9, vec![("open".into(), "Open".into())]);
+        let note = n.list.back().unwrap();
+        assert_eq!((note.nid, note.actions.len()), (9, 1));
+        assert_eq!(n.push("x", "y", Urgency::Low, "").0, 2);
+        assert_eq!(n.list.back().unwrap().nid, 0);
     }
 
     #[test]

@@ -20,7 +20,8 @@ mkdir -p "$log/cfg/welcome"
 printf '# Tips\n\nSee [the shell](shell.md) or [site](https://example.org) or [nowhere](missing.md).\n- one\n' > "$log/cfg/welcome/tips.md"
 printf '# Shell\n\nBack to [tips](tips.md).\n' > "$log/cfg/welcome/shell.md"
 touch "$log/start"; sleep 0.05
-FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" XDG_STATE_HOME="$log/state" "$bin" >"$log/c.log" 2>&1 &
+printf '#!/bin/sh\necho "$*" >> "%s/invoke.log"\n' "$log" > "$log/invoke"; chmod +x "$log/invoke"
+FD_NOTTS_INVOKE="$log/invoke" FD_BACKEND=winit FD_CONFIG_DIR="$log/cfg" XDG_STATE_HOME="$log/state" "$bin" >"$log/c.log" 2>&1 &
 cpid=$!
 trap 'kill $cpid 2>/dev/null; wait $cpid 2>/dev/null' EXIT
 
@@ -210,6 +211,12 @@ ctl wallpaper set -o winit "$log/wp.png" | grep -q '^ok' && ctl wallpaper | grep
 ctl wallpaper clear winit >/dev/null; ctl wallpaper clear >/dev/null; ctl wallpaper | grep -q '^\* none' && ! ctl wallpaper | grep -q '^winit' && ok "wallpaper clear" || bad "wallpaper clear"
 # notification center: groups by app, do-not-disturb, snooze, mute, per-app log, the panel
 ctl notify send -a discord -t im.received "ping from discord" | grep -q '^ok' && ok "notify send posts under an app" || bad "notify send"
+ctl notify send -a files -i 41 -A open=Open+folder,default=Go -- "copy done" | grep -q '^ok' && ctl notify list files | grep -q 'open=Open folder, default=Go' && ok "notify keeps the buttons of a note" || bad "notify actions"
+fid=$(ctl notify list files | tail -1 | cut -f1)
+ctl notify invoke "$fid" nope | grep -q 'has no action' && ok "notify invoke refuses an unknown action" || bad "invoke unknown"
+ctl notify invoke "$fid" open | grep -q '^ok invoked open' && sleep 0.3 && grep -q '^41 open' "$log/invoke.log" && ok "notify invoke tells the sender, with its own id" || bad "invoke"
+ctl notify list files | tail -1 | grep -q 'open=' && bad "buttons stay after invoke" || ok "buttons are gone after an invoke"
+ctl notify invoke 999999 x | grep -q 'no notification' && ok "notify invoke refuses an unknown note" || bad "invoke missing"
 ctl notify apps | grep -qP '^discord\t1\t' && ok "notify apps groups by app" || bad "notify apps"
 ctl notify dnd on | grep -q 'dnd on' && ctl notify send -a matrix "quiet one" >/dev/null && ctl notify status | grep -q 'missed 1' && ok "dnd holds a note back and counts it as missed" || bad "dnd"
 ctl notify send -a matrix -u critical "fire" >/dev/null; ctl notify list matrix | grep -q 'fire' && ok "a critical note goes through dnd" || bad "critical"
