@@ -13,6 +13,7 @@ pub mod theme;
 pub mod hooks;
 pub mod widgets;
 pub mod bar;
+pub mod barfit;
 pub mod apps;
 pub mod menu;
 pub mod calc;

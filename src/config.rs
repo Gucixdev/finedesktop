@@ -165,6 +165,8 @@ pub struct Config {
     pub theme: crate::components::theme::Theme,
     pub bar: BarPos,
     pub bar_left: Vec<String>,
+    /// middle of the bar: the date and time, never overlapped by the other two zones
+    pub bar_center: Vec<String>,
     pub bar_right: Vec<String>,
     pub segments: Vec<Segment>,
     /// seconds between bar refreshes (clock, cpu, ram ...)
@@ -248,6 +250,7 @@ impl Default for Config {
             theme: Default::default(),
             bar: BarPos::Top,
             bar_left: vec!["tags".into(), "layout".into(), "title".into()],
+            bar_center: vec![],
             bar_right: vec!["cpu".into(), "ram".into(), "vol".into(), "bat".into(), "clock".into()],
             segments: Vec::new(),
             bar_interval: 1,
@@ -449,6 +452,7 @@ impl Config {
                 _ => return Err(format!("bar = top|bottom|off, got {val:?}")),
             },
             "bar_left" => self.bar_left = val.split_whitespace().map(String::from).collect(),
+            "bar_center" => self.bar_center = val.split_whitespace().map(String::from).collect(),
             "bar_right" => self.bar_right = val.split_whitespace().map(String::from).collect(),
             "clock_format" if !val.is_empty() => self.clock_format = val.to_string(),
             "date_format" if !val.is_empty() => self.date_format = val.to_string(),
@@ -657,9 +661,10 @@ mod tests {
     fn default_bar_has_workspaces_left_and_status_right() {
         let mut c = Config::default();
         assert!(c.apply(DEFAULT).is_empty());
-        assert_eq!(c.bar_left, vec!["tags", "layout"]);
-        assert_eq!(c.bar_right.first().map(String::as_str), Some("notify"));
-        assert_eq!(c.bar_right.last().map(String::as_str), Some("time"));
+        assert_eq!(c.bar_left, vec!["tags", "layout", "notify"]);
+        assert_eq!(c.bar_center, vec!["date", "time"]);
+        assert_eq!(c.bar_right.first().map(String::as_str), Some("spk"));
+        assert!(!c.bar_right.iter().any(|n| n == "time" || n == "date"));
     }
 
     use super::*;

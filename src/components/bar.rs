@@ -25,6 +25,7 @@ use smithay::{
 use super::{
     stats,
     engine::layout_engine::BarKind,
+    barfit,
     font::{self, Canvas},
     theme::{Rgb, to_f32},
     widgets,
@@ -107,8 +108,8 @@ fn hash_of<T: Hash>(t: &T) -> u64 {
 }
 
 impl Desktop {
-    /// (left items, right items) of the status bar of monitor `mi`.
-    fn bar_items(&self, mi: usize) -> (Vec<Item>, Vec<Item>) {
+    /// (left, centre, right) items of the status bar of monitor `mi`.
+    fn bar_items(&self, mi: usize) -> (Vec<Item>, Vec<Item>, Vec<Item>) {
         let c = &self.config;
         let t = &c.theme;
         let m = &self.mons[mi];
@@ -202,17 +203,20 @@ impl Desktop {
                 }
             }
         };
-        let (mut left, mut right) = (Vec::new(), Vec::new());
+        let (mut left, mut center, mut right) = (Vec::new(), Vec::new(), Vec::new());
         // `stats` is a shorthand for the whole set
         const STATS: [&str; 6] = ["cpu-graph", "gpu-graph", "ram-graph", "vram-graph", "swap-graph", "disks"];
         let expand = |names: &Vec<String>| -> Vec<String> { names.iter().flat_map(|n| if n == "stats" { STATS.iter().map(|s| s.to_string()).collect() } else { vec![n.clone()] }).collect() };
         for n in expand(&c.bar_left) {
             one(&n, &mut left);
         }
+        for n in expand(&c.bar_center) {
+            one(&n, &mut center);
+        }
         for n in expand(&c.bar_right) {
             one(&n, &mut right);
         }
-        (left, right)
+        (left, center, right)
     }
 
     fn cached(&mut self, key: String, w: i32, h: i32, hash: u64, draw: impl FnOnce(&mut Canvas)) -> MemoryRenderBuffer {
@@ -306,42 +310,46 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
 
     // status bar
     if pos != BarPos::Off {
-        let (left, right) = state.bar_items(mi);
+        let (left, center, right) = state.bar_items(mi);
         let w = geo.size.w;
         let key = format!("{name}:bar");
-        let hash = hash_of(&(&left, &right, w, bh, t.name.clone(), scale));
+        let hash = hash_of(&(&left, &center, &right, w, bh, t.name.clone(), scale));
         let buf = state.cached(key, w, bh, hash, |cv| {
             cv.rect(0, 0, w, bh, t.bar_bg);
             let cw = fcw * scale;
-            let mut x = 0;
-            for i in &left {
-                let tw = item_w(i, cw, scale);
-                let slot = tw + if i.bg.is_some() { 0 } else { pad };
+            // the left zone is packed tighter than the others (half padding)
+            let slot = |i: &Item, p: i32| item_w(i, cw, scale) + if i.bg.is_some() { 0 } else { p };
+            let widths = |v: &[Item], p: i32| -> Vec<i32> { v.iter().map(|i| slot(i, p)).collect() };
+            let fit = barfit::fit(w, pad * 2, &widths(&left, pad), &widths(&center, pad * 2), &widths(&right, pad * 2));
+            // one item in a slot starting at x; text and picture are clipped at `clip` so a zone never paints into its neighbour
+            let mut put = |i: &Item, x: i32, p: i32, clip: i32| {
+                let sw = slot(i, p);
                 if let Some(bg) = i.bg {
-                    cv.rect(x, 0, slot, bh, bg);
+                    cv.rect(x, 0, sw.min(clip - x).max(0), bh, bg);
                 }
-                let tx = x + if i.bg.is_some() { 0 } else { pad / 2 };
-                cv.text(tx, ty, &i.text, if i.gfx == Gfx::None { i.fg } else { t.dim }, scale, w);
+                let tx = x + if i.bg.is_some() { 0 } else { p / 2 };
+                cv.text(tx, ty, &i.text, if i.gfx == Gfx::None { i.fg } else { t.dim }, scale, clip);
                 if i.gfx != Gfx::None {
                     let gx = tx + i.text.chars().count() as i32 * cw + if i.text.is_empty() { 0 } else { cw / 2 };
-                    draw_gfx(cv, i, gx, bh, cw, scale, &t);
+                    if gx + gfx_w(&i.gfx, cw, scale) <= clip {
+                        draw_gfx(cv, i, gx, bh, cw, scale, &t);
+                    }
                 }
-                x += slot;
+                sw
+            };
+            let mut x = 0;
+            for i in &left[..fit.left] {
+                x += put(i, x, pad, fit.center_x);
+            }
+            let mut x = fit.center_x;
+            let cend = x + widths(&center, pad * 2).iter().sum::<i32>();
+            for i in &center {
+                x += put(i, x, pad * 2, cend.min(w));
             }
             let mut rx = w;
-            for i in right.iter().rev() {
-                let tw = item_w(i, cw, scale);
-                let slot = tw + if i.bg.is_some() { 0 } else { pad * 2 };
-                rx -= slot;
-                if let Some(bg) = i.bg {
-                    cv.rect(rx, 0, slot, bh, bg);
-                }
-                let tx = rx + if i.bg.is_some() { 0 } else { pad };
-                cv.text(tx, ty, &i.text, if i.gfx == Gfx::None { i.fg } else { t.dim }, scale, w);
-                if i.gfx != Gfx::None {
-                    let gx = tx + i.text.chars().count() as i32 * cw + if i.text.is_empty() { 0 } else { cw / 2 };
-                    draw_gfx(cv, i, gx, bh, cw, scale, &t);
-                }
+            for i in right[fit.right_skip..].iter().rev() {
+                rx -= slot(i, pad * 2);
+                put(i, rx, pad * 2, w);
             }
             cv.rect(0, if pos == BarPos::Top { bh - 1 } else { 0 }, w, 1, t.border_normal);
         });

@@ -1,7 +1,7 @@
 //! Bar widgets. Built-in ones (cpu ram vol bat clock) are sampled by one background thread, so the compositor
 //! never waits on /proc, wpctl or a slow script. Your own widgets are
 //!   - `segment = NAME SECONDS COMMAND` in the config, or
-//!   - an executable `widgets/NAME` in the config dir, used when NAME appears in `bar_left` / `bar_right`.
+//!   - an executable `widgets/NAME` in the config dir, used when NAME appears in `bar_left` / `bar_center` / `bar_right`.
 //!     An optional first comment line `# every 30` sets its refresh in seconds (default 5).
 //! The first line of the output is the text; a leading `#rrggbb ` colours it.
 
@@ -264,7 +264,7 @@ impl Widgets {
     pub fn configure(&self, cfg: &Config) {
         let mut jobs: Vec<Job> = cfg.segments.iter().map(|s| Job { name: s.name.clone(), every: s.every, cmd: s.cmd.clone() }).collect();
         if let Some(dir) = crate::config::config_dir().map(|d| d.join("widgets")) {
-            for name in cfg.bar_left.iter().chain(&cfg.bar_right) {
+            for name in cfg.bar_left.iter().chain(&cfg.bar_center).chain(&cfg.bar_right) {
                 if BUILTIN.contains(&name.as_str()) || jobs.iter().any(|j| &j.name == name) || name.contains('/') {
                     continue;
                 }
