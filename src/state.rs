@@ -19,7 +19,10 @@ use smithay::{
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
-        selection::data_device::DataDeviceState,
+        selection::{
+            data_device::DataDeviceState, ext_data_control, primary_selection::PrimarySelectionState,
+            wlr_data_control,
+        },
         shell::xdg::XdgShellState,
         shm::ShmState,
         socket::ListeningSocketSource,
@@ -70,6 +73,11 @@ pub struct Desktop {
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Desktop>,
     pub data_device_state: DataDeviceState,
+    /// middle-click paste of whatever is selected
+    pub primary_selection_state: PrimarySelectionState,
+    /// wl-copy / wl-paste / cliphist talk to the clipboard through these
+    pub wlr_data_control_state: wlr_data_control::DataControlState,
+    pub ext_data_control_state: ext_data_control::DataControlState,
     pub popups: PopupManager,
 
     pub seat: Seat<Self>,
@@ -143,6 +151,11 @@ impl Desktop {
 
         // Data device is responsible for clipboard and drag-and-drop
         let data_device_state = DataDeviceState::new::<Self>(&dh);
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
+        let wlr_data_control_state =
+            wlr_data_control::DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
+        let ext_data_control_state =
+            ext_data_control::DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
 
         // A seat is a group of keyboards, pointer and touch devices.
         // A seat typically has a pointer and maintains a keyboard focus and a pointer focus.
@@ -192,6 +205,9 @@ impl Desktop {
             output_manager_state,
             seat_state,
             data_device_state,
+            primary_selection_state,
+            wlr_data_control_state,
+            ext_data_control_state,
             popups,
             seat,
             config,

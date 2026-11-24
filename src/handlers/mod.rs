@@ -19,6 +19,8 @@ use smithay::utils::Serial;
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::pointer_constraints::PointerConstraintsHandler;
 use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::selection::primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus};
+use smithay::wayland::selection::{ext_data_control, wlr_data_control};
 use smithay::wayland::selection::data_device::{
     DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
 };
@@ -37,7 +39,8 @@ impl SeatHandler for Desktop {
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
-        set_data_device_focus(dh, seat, client);
+        set_data_device_focus(dh, seat, client.clone());
+        set_primary_focus(dh, seat, client);
     }
 }
 
@@ -49,6 +52,24 @@ impl PointerConstraintsHandler for Desktop {}
 
 impl SelectionHandler for Desktop {
     type SelectionUserData = ();
+}
+
+impl PrimarySelectionHandler for Desktop {
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.primary_selection_state
+    }
+}
+
+impl wlr_data_control::DataControlHandler for Desktop {
+    fn data_control_state(&mut self) -> &mut wlr_data_control::DataControlState {
+        &mut self.wlr_data_control_state
+    }
+}
+
+impl ext_data_control::DataControlHandler for Desktop {
+    fn data_control_state(&mut self) -> &mut ext_data_control::DataControlState {
+        &mut self.ext_data_control_state
+    }
 }
 
 impl DataDeviceHandler for Desktop {
