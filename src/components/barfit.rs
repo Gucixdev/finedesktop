@@ -23,6 +23,19 @@ fn sum(v: &[i32]) -> i32 {
 pub fn fit(w: i32, gap: i32, left: &[i32], center: &[i32], right: &[i32]) -> Fit {
     let c = sum(center);
     let (lw, rw) = (sum(left), sum(right));
+    if center.is_empty() {
+        // no centre zone: the left one keeps what it needs, the right one gets all the rest
+        let mut left_n = left.len();
+        while left_n > 0 && sum(&left[..left_n]) > w {
+            left_n -= 1;
+        }
+        let room = (w - sum(&left[..left_n]) - gap).max(0);
+        let mut skip = 0;
+        while skip < right.len() && sum(&right[skip..]) > room {
+            skip += 1;
+        }
+        return Fit { left: left_n, right_skip: skip, center_x: w };
+    }
     let mid = ((w - c) / 2).max(0);
     let mut cx = mid;
     // room each side has when the centre stays in the middle
@@ -90,6 +103,14 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn without_a_centre_the_right_zone_may_use_more_than_half() {
+        let f = fit(1000, 8, &[100], &[], &[300, 300, 200]);
+        assert_eq!((f.left, f.right_skip), (1, 0));
+        let f = fit(700, 8, &[100], &[], &[300, 300, 200]);
+        assert_eq!(f.right_skip, 1);
     }
 
     #[test]

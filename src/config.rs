@@ -213,6 +213,11 @@ pub struct Config {
     pub tearing: bool,
     /// `restore = off`: do not start the apps of the last session again at start (components/restore.rs)
     pub restore: bool,
+    /// `corners = on` rounds the corners of every screen by `corner_radius` pixels
+    pub corners: bool,
+    pub corner_radius: i32,
+    /// `menu_stay = off`: the menu closes after an entry is launched (default on: only Esc closes it)
+    pub menu_stay: bool,
     /// path of libfinedesktop_engine.so (hot-reloadable layout/focus engines); empty = the default below
     pub engine: String,
     /// xkb layout list and options, e.g. `kb_layout = pl,gb` and `kb_options = grp:shifts_toggle`
@@ -279,6 +284,9 @@ impl Default for Config {
             mouse_follows_focus: true,
             tearing: false,
             restore: true,
+            corners: false,
+            corner_radius: 16,
+            menu_stay: true,
             engine: String::new(),
             kb_layout: String::new(),
             kb_options: String::new(),
@@ -492,6 +500,9 @@ impl Config {
             "kb_options" => self.kb_options = val.into(),
             "engine" => self.engine = val.to_string(),
             "mouse_follows_focus" => self.mouse_follows_focus = matches!(val, "on" | "true" | "yes" | "1"),
+            "corners" => self.corners = matches!(val, "on" | "true" | "yes" | "1"),
+            "corner_radius" => self.corner_radius = n(val)?.clamp(0, 64),
+            "menu_stay" => self.menu_stay = matches!(val, "on" | "true" | "yes" | "1"),
             "restore" => self.restore = matches!(val, "on" | "true" | "yes" | "1"),
             "tearing" => self.tearing = matches!(val, "on" | "true" | "yes" | "1"),
             "focus_follows_mouse" => self.focus_follows_mouse = matches!(val, "on" | "true" | "yes" | "1"),
@@ -661,10 +672,11 @@ mod tests {
     fn default_bar_has_workspaces_left_and_status_right() {
         let mut c = Config::default();
         assert!(c.apply(DEFAULT).is_empty());
-        assert_eq!(c.bar_left, vec!["tags", "layout", "notify"]);
-        assert_eq!(c.bar_center, vec!["date", "time"]);
+        assert_eq!(c.bar_left, vec!["tags", "layout"]);
+        assert!(c.bar_center.is_empty(), "the middle of the bar stays free");
         assert_eq!(c.bar_right.first().map(String::as_str), Some("spk"));
-        assert!(!c.bar_right.iter().any(|n| n == "time" || n == "date"));
+        assert_eq!(c.bar_right.last().map(String::as_str), Some("time"));
+        assert!(!c.bar_right.iter().any(|n| n == "notify"), "notifications are toasts, not a bar item");
     }
 
     use super::*;

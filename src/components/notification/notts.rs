@@ -89,6 +89,8 @@ pub struct Notes {
     pub muted: BTreeSet<String>,
     /// quiet notes up to this id were looked at (the panel was open)
     seen: u32,
+    /// toasts up to this id were closed by hand
+    dismissed: u32,
     /// where the log and the state go; none in tests
     dir: Option<PathBuf>,
 }
@@ -165,6 +167,16 @@ impl Notes {
     /// The newest note, if it is still within `SHOWN` and was not held back.
     pub fn current(&self) -> Option<&Note> {
         self.list.back().filter(|n| !n.quiet && n.at.elapsed() < SHOWN)
+    }
+
+    /// The cards on screen, newest first: not held back, not closed, still within `SHOWN`, at most `max`.
+    pub fn toasts(&self, max: usize) -> Vec<&Note> {
+        self.list.iter().rev().filter(|n| !n.quiet && n.id > self.dismissed && n.at.elapsed() < SHOWN).take(max).collect()
+    }
+
+    /// Close every card now; the notes stay in the history.
+    pub fn dismiss(&mut self) {
+        self.dismissed = self.next;
     }
 
     /// Quiet notes nobody looked at yet.
@@ -373,6 +385,11 @@ impl Desktop {
             "apps" => {
                 let rows: Vec<String> = self.notes.apps().into_iter().map(|(a, c, t)| format!("{a}\t{c}\t{t}{}", if self.notes.muted.contains(&a) { "\tmuted" } else { "" })).collect();
                 if rows.is_empty() { "(no notifications)".into() } else { rows.join("\n") }
+            }
+            "dismiss" | "close" => {
+                self.notes.dismiss();
+                self.bar_dirty = true;
+                "ok".into()
             }
             "clear" => {
                 let n = self.notes.clear((!rest.is_empty()).then_some(rest));

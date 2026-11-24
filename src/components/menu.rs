@@ -263,6 +263,10 @@ pub struct Menu {
     pub stack: Vec<Level>,
     pub query: String,
     pub sel: usize,
+    /// rows marked with Space (indices into the level's items); Enter then launches all of them
+    pub marks: Vec<usize>,
+    /// the level (depth and id) the marks belong to; marks of another level do not count
+    pub marks_for: Option<(usize, Id)>,
 }
 
 impl Entry {
@@ -561,6 +565,9 @@ impl Desktop {
             t("Przywracaj aplikacje po restarcie", "restore", c.restore),
             t("Widgety paska", "widgets", c.widgets),
             t("Panel powitalny", "welcome_auto", c.panels),
+            t("Menu zostaje otwarte po uruchomieniu (zamyka Esc)", "menu_stay", c.menu_stay),
+            t("Zaokraglone rogi ekranu", "corners", c.corners),
+            s("Promien rogow (px)", "corner_radius", 0.0, 64.0, 2.0, c.corner_radius as f32),
             head("animacje"),
             t("Animacje", "animations", c.theme.animations),
             s("Szybkosc animacji (1 = domyslna)", "anim_speed", 0.25, 3.0, 0.25, c.anim_speed),
@@ -770,6 +777,32 @@ impl Menu {
     }
 
     /// What to draw: section titles between the visible entries, and which row is selected.
+    /// Indices of the marked rows of the level that is open now.
+    pub fn marked(&self) -> &[usize] {
+        if self.marks_for == Some((self.stack.len(), self.level().id)) { &self.marks } else { &[] }
+    }
+
+    /// Mark or unmark the row under the cursor; false when it is not a row that can be launched.
+    pub fn toggle_mark(&mut self) -> bool {
+        let vis = self.visible();
+        let Some(&i) = vis.get(self.sel.min(vis.len().saturating_sub(1))) else { return false };
+        if !matches!(self.level().items[i].act, Act::Run { .. } | Act::Clip(_) | Act::Copy(_) | Act::Theme(_) | Act::Mode(_) | Act::Layout(_) | Act::Ctl(_)) {
+            return false;
+        }
+        let here = Some((self.stack.len(), self.level().id));
+        if self.marks_for != here {
+            self.marks.clear();
+            self.marks_for = here;
+        }
+        match self.marks.iter().position(|&m| m == i) {
+            Some(p) => {
+                self.marks.remove(p);
+            }
+            None => self.marks.push(i),
+        }
+        true
+    }
+
     pub fn rows(&self) -> (Vec<Row>, usize) {
         let items = &self.level().items;
         let mut head_of: Vec<Option<&str>> = Vec::with_capacity(items.len());
@@ -793,7 +826,12 @@ impl Menu {
             if n == sel {
                 sel_row = rows.len();
             }
-            rows.push(items[i].row());
+            let marked = self.marked().contains(&i);
+            rows.push(match items[i].row() {
+                Row::Item(l) if marked => Row::Item(format!("[x] {l}")),
+                Row::Icon(l, ic) if marked => Row::Icon(format!("[x] {l}"), ic),
+                r => r,
+            });
         }
         (rows, sel_row)
     }
@@ -943,6 +981,13 @@ impl Desktop {
             if self.menu_control(0) {
                 return "ok".into();
             }
+            // on a launchable row with nothing typed, Space marks it (several at once); Enter launches the marked ones
+            if self.menu.as_mut().is_some_and(|m| m.query.is_empty() && m.toggle_mark()) {
+                if let Some(m) = self.menu.as_mut() {
+                    m.sel = (m.sel + 1).min(m.visible().len().saturating_sub(1));
+                }
+                return "ok".into();
+            }
         }
         if matches!((verb, rest), ("key", "left" | "right") | ("left" | "right", "")) {
             let dir = if rest == "left" || verb == "left" { -1 } else { 1 };
@@ -1061,6 +1106,21 @@ impl Desktop {
 
     /// Enter on the selected row. A choice made in a dropdown closes the dropdown and shows the panel under it again.
     fn menu_enter(&mut self) -> String {
+        let marked: Vec<Entry> = self.menu.as_ref().map(|m| m.marked().iter().filter_map(|&i| m.level().items.get(i).cloned()).collect()).unwrap_or_default();
+        if !marked.is_empty() {
+            if let Some(m) = self.menu.as_mut() {
+                m.marks.clear();
+                m.marks_for = None;
+            }
+            let n = marked.len();
+            for en in marked {
+                self.run_entry(en.act);
+            }
+            if !self.config.menu_stay {
+                self.menu = None;
+            }
+            return format!("ok {n} launched");
+        }
         let in_pick = self.menu.as_ref().is_some_and(|m| m.level().id == Id::Pick);
         let r = self.menu_enter_row();
         if in_pick {
@@ -1232,8 +1292,15 @@ impl Desktop {
         if matches!(entry.act, Act::Nop | Act::Head) {
             return "ok".into();
         }
-        self.menu = None;
-        match entry.act {
+        if !self.config.menu_stay {
+            self.menu = None;
+        }
+        self.run_entry(entry.act)
+    }
+
+    /// Launch one entry: the end of Enter on a row, and of Enter with several rows marked.
+    fn run_entry(&mut self, act: Act) -> String {
+        match act {
             Act::Run { cmd, terminal } => {
                 if terminal {
                     let term = self.config.terminal.clone();

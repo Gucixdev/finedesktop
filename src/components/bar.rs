@@ -101,6 +101,93 @@ fn draw_gfx(cv: &mut Canvas, i: &Item, x: i32, bh: i32, cw: i32, scale: i32, t: 
     }
 }
 
+/// What kind of thing a bar item is; neighbours of different kinds get a separator by themselves.
+fn kind(name: &str) -> &'static str {
+    match name {
+        "tags" | "layout" => "workspaces",
+        "spk" | "vol" | "mic" => "audio",
+        "bat" => "power",
+        "date" | "time" | "clock" => "clock",
+        "notify" => "notify",
+        "cpu" | "ram" | "swap" | "gpu" | "vram" | "disk" | "disks" | "disk-bar" | "stats" => "stats",
+        n if n.ends_with("-graph") => "stats",
+        _ => "custom",
+    }
+}
+
+/// Every statistic once: `cpu-graph` already shows the number, so a plain `cpu` next to it goes; `disks` replaces `disk-bar`;
+/// a name twice (in any zone) stays where it came first. `|` is kept.
+fn tidy(zones: [Vec<String>; 3]) -> [Vec<String>; 3] {
+    let all: Vec<&String> = zones.iter().flatten().collect();
+    let has = |n: &str| all.iter().any(|x| x.as_str() == n);
+    let mut seen: Vec<String> = Vec::new();
+    let mut out: [Vec<String>; 3] = Default::default();
+    for (z, names) in zones.iter().enumerate() {
+        for n in names {
+            let covered = ["cpu", "ram", "swap", "gpu", "vram"].contains(&n.as_str()) && has(&format!("{n}-graph")) || n == "disk-bar" && has("disks");
+            if n != "|" && (covered || seen.contains(n)) {
+                continue;
+            }
+            seen.push(n.clone());
+            out[z].push(n.clone());
+        }
+    }
+    out
+}
+
+/// Cut `text` into at most `max` lines of at most `cols` characters; words are not split unless one is longer than a line.
+fn wrap(text: &str, cols: usize, max: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        let mut word = word.to_string();
+        while word.chars().count() > cols {
+            if !cur.is_empty() {
+                lines.push(std::mem::take(&mut cur));
+            }
+            let head: String = word.chars().take(cols).collect();
+            word = word.chars().skip(cols).collect();
+            lines.push(head);
+        }
+        let need = if cur.is_empty() { 0 } else { cur.chars().count() + 1 } + word.chars().count();
+        if need > cols {
+            lines.push(std::mem::take(&mut cur));
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(&word);
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    if lines.len() > max {
+        lines.truncate(max);
+        if let Some(l) = lines.last_mut() {
+            while l.chars().count() + 3 > cols {
+                l.pop();
+            }
+            l.push_str("...");
+        }
+    }
+    lines
+}
+
+/// BGRA pixels of the black wedge that rounds one screen corner: `r` by `r`, opaque outside the quarter circle, clear
+/// inside, one anti-aliased pixel between. Premultiplied, so black is just the alpha byte.
+fn corner_px(r: i32, right: bool, bottom: bool) -> Vec<u8> {
+    let mut px = Vec::with_capacity((r * r * 4) as usize);
+    for y in 0..r {
+        for x in 0..r {
+            let (fx, fy) = (if right { r - 1 - x } else { x }, if bottom { r - 1 - y } else { y });
+            let d = ((fx as f32 + 0.5 - r as f32).powi(2) + (fy as f32 + 0.5 - r as f32).powi(2)).sqrt();
+            let a = ((d - r as f32 + 0.5).clamp(0.0, 1.0) * 255.0) as u8;
+            px.extend_from_slice(&[0, 0, 0, a]);
+        }
+    }
+    px
+}
+
 fn hash_of<T: Hash>(t: &T) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     t.hash(&mut h);
@@ -114,7 +201,7 @@ impl Desktop {
         let t = &c.theme;
         let m = &self.mons[mi];
         let sh = self.widgets.shared.lock().unwrap();
-        let mut one = |name: &str, out: &mut Vec<Item>| match name {
+        let one = |name: &str, out: &mut Vec<Item>| match name {
             "tags" => {
                 for (i, ws) in m.ws.iter().enumerate() {
                     // the open workspace is shown as >n<, the others as " n "
@@ -203,19 +290,41 @@ impl Desktop {
                 }
             }
         };
-        let (mut left, mut center, mut right) = (Vec::new(), Vec::new(), Vec::new());
         // `stats` is a shorthand for the whole set
         const STATS: [&str; 6] = ["cpu-graph", "gpu-graph", "ram-graph", "vram-graph", "swap-graph", "disks"];
         let expand = |names: &Vec<String>| -> Vec<String> { names.iter().flat_map(|n| if n == "stats" { STATS.iter().map(|s| s.to_string()).collect() } else { vec![n.clone()] }).collect() };
-        for n in expand(&c.bar_left) {
-            one(&n, &mut left);
-        }
-        for n in expand(&c.bar_center) {
-            one(&n, &mut center);
-        }
-        for n in expand(&c.bar_right) {
-            one(&n, &mut right);
-        }
+        let zones = tidy([expand(&c.bar_left), expand(&c.bar_center), expand(&c.bar_right)]);
+        let sep = it("|", t.dim);
+        let is_sep = |i: &Item| i.text == "|" && i.gfx == Gfx::None;
+        let fill = |names: &Vec<String>| -> Vec<Item> {
+            let mut out: Vec<Item> = Vec::new();
+            let mut last: Option<&str> = None;
+            for n in names {
+                if n == "|" {
+                    if out.last().is_some_and(|i| !is_sep(i)) {
+                        out.push(sep.clone());
+                    }
+                    last = None;
+                    continue;
+                }
+                let before = out.len();
+                one(n, &mut out);
+                if out.len() == before {
+                    continue;
+                }
+                let k = kind(n);
+                // neighbours of different kinds are told apart by a separator the bar draws itself
+                if last.is_some_and(|l| l != k) && before > 0 && !is_sep(&out[before - 1]) {
+                    out.insert(before, sep.clone());
+                }
+                last = Some(k);
+            }
+            while out.last().is_some_and(&is_sep) {
+                out.pop();
+            }
+            out
+        };
+        let (left, center, right) = (fill(&zones[0]), fill(&zones[1]), fill(&zones[2]));
         (left, center, right)
     }
 
@@ -375,6 +484,41 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
                 out.push(e.into());
             }
         }
+    }
+    // notifications: cards in the top right corner (under the bar), newest on top; they go after a few seconds or `ctl notify dismiss`
+    if mi == state.focus_mon {
+        let cards: Vec<(u32, String, String, bool)> = state
+            .notes
+            .toasts(4)
+            .iter()
+            .map(|n| (n.id, format!("{}  {}", if n.app == "ctl" { "" } else { n.app.as_str() }, n.stamp).trim().to_string(), n.text.clone(), n.urgency == super::notification::notts::Urgency::Critical))
+            .collect();
+        let cols = (geo.size.w / (fcw * scale) / 3).clamp(20, 44) as usize;
+        let cw = fcw * scale;
+        let card_w = (cols as i32 * cw + pad * 2).min(geo.size.w - 16);
+        let mut y = if pos == BarPos::Top { bh + 8 } else { 8 };
+        let mut stack: Vec<Ov> = Vec::new();
+        for (n, (id, head, text, crit)) in cards.iter().enumerate() {
+            let lines = wrap(text, cols, 4);
+            let h = (1 + lines.len() as i32) * fch * scale + pad * 3;
+            let edge = if *crit { t.err } else { t.border_focus };
+            let hash = hash_of(&(id, head, text, crit, card_w, scale, t.name.clone()));
+            let th = t.clone();
+            let buf = state.cached(format!("{name}:toast{n}"), card_w, h, hash, |cv| {
+                cv.rect(0, 0, card_w, h, edge);
+                cv.rect(2, 2, card_w - 4, h - 4, th.bg);
+                cv.text(pad, pad, head, th.dim, scale, card_w - pad);
+                for (k, l) in lines.iter().enumerate() {
+                    cv.text(pad, pad * 2 + (k as i32 + 1) * fch * scale, l, th.fg, scale, card_w - pad);
+                }
+            });
+            if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, ((geo.size.w - card_w - 10) as f64, y as f64), &buf, None, None, None, Kind::Unspecified) {
+                stack.push(e.into());
+            }
+            y += h + 6;
+        }
+        // topmost first: the newest card is the first one
+        out.splice(0..0, stack);
     }
     // the menu: one big centred list panel above everything, on the monitor that has focus. The settings panel has
     // its tabs down the left; the panel slides in on a spring.
@@ -538,5 +682,69 @@ pub fn overlay(state: &mut Desktop, renderer: &mut GlesRenderer, output: &Output
             }
         }
     }
+    // rounded screen corners: black wedges above everything
+    let r = state.config.corner_radius;
+    if state.config.corners && r > 1 {
+        let (w, h) = (geo.size.w, geo.size.h);
+        for (k, (x, y, right, bottom)) in [(0, 0, false, false), (w - r, 0, true, false), (0, h - r, false, true), (w - r, h - r, true, true)].into_iter().enumerate() {
+            let buf = state.cached(format!("{name}:corner{k}"), r, r, hash_of(&(r, k)), |cv| cv.px = corner_px(r, right, bottom));
+            if let Ok(e) = MemoryRenderBufferRenderElement::from_buffer(renderer, (x as f64, y as f64), &buf, None, None, None, Kind::Unspecified) {
+                out.insert(0, e.into());
+            }
+        }
+    }
     out
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn a_statistic_and_its_graph_are_one_item() {
+        let z = tidy([v("tags"), v(""), v("cpu ram spk | cpu-graph ram-graph disk-bar disks")]);
+        assert_eq!(z[2], v("spk | cpu-graph ram-graph disks"));
+    }
+
+    #[test]
+    fn the_same_name_is_not_drawn_twice_in_any_zone() {
+        let z = tidy([v("tags time"), v(""), v("date time")]);
+        assert_eq!((z[0].clone(), z[2].clone()), (v("tags time"), v("date")));
+    }
+
+    #[test]
+    fn kinds_decide_where_separators_go() {
+        assert_eq!(kind("spk"), kind("mic"));
+        assert_ne!(kind("mic"), kind("cpu-graph"));
+        assert_eq!(kind("date"), kind("time"));
+        assert_eq!(kind("cpu-graph"), kind("disks"));
+    }
+
+    #[test]
+    fn wrap_keeps_words_and_caps_the_lines() {
+        assert_eq!(wrap("aa bb cc", 5, 3), vec!["aa bb".to_string(), "cc".to_string()]);
+        assert_eq!(wrap("abcdefghij", 4, 5), v("abcd efgh ij"));
+        let l = wrap("one two three four five six seven", 7, 2);
+        assert_eq!(l.len(), 2);
+        assert!(l[1].ends_with("..."), "{l:?}");
+        assert!(l.iter().all(|x| x.chars().count() <= 7));
+    }
+
+    #[test]
+    fn a_corner_is_opaque_outside_and_clear_inside() {
+        let r = 16;
+        let px = corner_px(r, false, false);
+        let a = |x: i32, y: i32| px[((y * r + x) * 4 + 3) as usize];
+        assert_eq!(a(0, 0), 255);
+        assert_eq!(a(r - 1, r - 1), 0);
+        // the other three are the same wedge mirrored
+        let br = corner_px(r, true, true);
+        assert_eq!(br[((r * r - 1) * 4 + 3) as usize], 255);
+        assert_eq!(corner_px(r, true, false)[(r - 1) as usize * 4 + 3], 255);
+    }
 }
